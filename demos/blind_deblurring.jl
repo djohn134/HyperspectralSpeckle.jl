@@ -8,7 +8,7 @@ show_the_sausage()
 FTYPE = Float32;
 # folder = "/home/dan/Desktop/JASS_2024/tests";
 folder = "data/test"
-id = ""
+id = "_iso"
 verb = true
 plot = true
 ###########################################
@@ -27,7 +27,6 @@ nλint = 1
 Δλ = (nλ == 1) ? 1.0 : (λmax - λmin) / (nλ - 1)
 resolution = mean(λ) / Δλ
 ###########################################
-id = "_mrl"
 
 ########## Anisopatch Parameters ##########
 ## Unused but sets the size of the layer ##
@@ -40,19 +39,18 @@ patches = AnisoplanaticPatches(patch_dim, image_dim, patch_overlap, isoplanatic=
 
 ### Detector & Observations Parameters ####
 D = 3.6  # m
-fov = 8.0
+fov = 20.0
 pixscale_full = fov / image_dim
 pixscale_wfs = pixscale_full .* nsubaps_side
 qefile = "data/qe/prime-95b_qe.dat"
 ~, qe = readqe(qefile, λ=λ)
 rn = 2.0
 exptime = 5e-3
-noise = true
 ζ = 0.0
 ########## Create Optical System ##########
-filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
+filterV = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
 beamsplitter = OpticalElement(λ=[0.0, 10000.0], response=[0.5, 0.5], FTYPE=FTYPE)
-optics_full = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
+optics_full = OpticalSystem([filterV, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 ######### Create Full-Ap Detector #########
 detector_full = Detector(
     qe=qe,
@@ -80,7 +78,7 @@ observations_full = Observations(
     FTYPE=FTYPE
 )
 # observations = [observations_full]
-optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
+optics_wfs = OpticalSystem([filterV, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 detector_wfs = Detector(
     qe=qe,
     rn=rn,
@@ -129,7 +127,7 @@ masks = [masks_wfs, masks_full]
 ###########################################
 
 ############ Object Parameters ############
-object_height = 535.0  # km
+object_height = 515.0  # km
 ############## Create object ##############
 object = Object(
     λ=λ,
@@ -143,32 +141,31 @@ all_subap_images = block_replicate(dropdims(sum(observations_wfs.images, dims=(3
 object.object = repeat(all_subap_images, 1, 1, nλ)
 object.object ./= sum(object.object)
 object.object .*= mean(sum(observations_full.images, dims=(1, 2, 3)) .+ sum(observations_wfs.images, dims=(1, 2, 3)))
-# object.object = readfits("$(folder)/object_recon_iso.fits")
+# object.object = readfits("$(folder)/object_recon.fits")
 # object.object = readfits("$(folder)/object_truth.fits")
 # object.object = zeros(FTYPE, image_dim, image_dim, nλ)
 ###########################################
 
 
 ########## Atmosphere Parameters ##########
-# heights = [0.0, 7.0, 12.5]
-heights = [0.0]
+heights = [0.0, 7.0, 12.5]
 wind_speed = wind_profile_roberts2011(heights, ζ)
 # heights .*= 0.0
-# heights .= [0.0, 5.0, 10.0]
-# wind_direction = [45.0, 125.0, 135.0]
-wind_direction = [0.0]
+wind_direction = [45.0, 125.0, 135.0]
 wind = [wind_speed wind_direction]
 nlayers = length(heights)
 scaleby_wavelength = λ_nyquist ./ λ
 sampling_nyquist_mperpix = layer_nyquist_sampling_mperpix(D, image_dim, nlayers)
 sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heights, image_dim)
-~, transmission = readtransmission("data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
+# ~, transmission = readtransmission("data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
+transmission = ones(FTYPE, nλ)
 ############ Create Atmosphere ############
 atmosphere = Atmosphere(
     wind=wind, 
     heights=heights, 
     sampling_nyquist_mperpix=sampling_nyquist_mperpix,
     sampling_nyquist_arcsecperpix=sampling_nyquist_arcsecperpix,
+    common_opd=false,
     λ=λ,
     λ_nyquist=λ_nyquist,
     λ_ref=λ_ref,
@@ -178,11 +175,11 @@ atmosphere = Atmosphere(
 calculate_screen_size!(atmosphere, observations_full, object, patches)
 calculate_pupil_positions!(atmosphere, observations_full)
 calculate_layer_masks_eff!(patches, atmosphere, observations_full, object, masks_full)
-atmosphere.opd = zeros(FTYPE, size(atmosphere.masks)[1:3])
-# atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
+# atmosphere.opd = zeros(FTYPE, size(atmosphere.masks)[1:3])
+atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
 # atmosphere.opd = readfits("$(folder)/opd_recon_iso.fits")
-# atmosphere.ϕ = readfits("$(folder)/phase_recon_iso.fits")
-# atmosphere.ϕ = readfits("$(folder)/Dr0_20_phase_full.fits")
+# atmosphere.phase = readfits("$(folder)/phase_recon.fits")
+# atmosphere.phase = readfits("$(folder)/Dr0_20_phase_full.fits", FTYPE=FTYPE)
 ###########################################
 
 ######### Reconstruction Object ###########
@@ -198,32 +195,32 @@ reconstruction = Reconstruction(
     niter_mfbd=10,
     maxiter=10,
     # indx_boot=[1:2],
-    wavefront_parameter=:opd,
+    wavefront_parameter=:phase,
     minimization_scheme=:mle,
     noise_model=:gaussian,
     maxeval=Dict("wf"=>1000, "object"=>1000),
     smoothing=true,
-    # minFWHM=0.5,
-    # maxFWHM=0.5,
+    minFWHM=0.5,
+    maxFWHM=50.0,
     # fwhm_schedule=ReciprocalSchedule(5.0, 0.5),
     # fwhm_schedule=ConstantSchedule(0.5),
-    grtol=0.0,
-    frtol=0.0,
-    xrtol=0.0,
+    grtol=1e-9,
+    frtol=1e-9,
+    xrtol=1e-9,
     build_dim=image_dim,
     verb=verb,
     plot=plot,
     FTYPE=FTYPE
 );
-reconstruct!(reconstruction, observations, atmosphere, object, masks, patches, write=true, folder=folder, id=id)
+reconstruct!(reconstruction, observations, atmosphere, object, masks, patches, write=false, folder=folder, id=id)
 # reconstruct_static_phase!(reconstruction, observations, atmosphere, object, masks, patches, write=true, folder=folder, id=id)
 ###########################################
 
 ###########################################
 ## Write isoplanatic phases and images ####
-# writefits(observations_full.model_images, "$(folder)/models_ISH1x1_recon$(id).fits")
-# writefits(observations_wfs.model_images, "$(folder)/models_ISH6x6_recon$(id).fits")
-# writefits(object.object, "$(folder)/object_recon$(id).fits")
-# writefits(atmosphere.opd, "$(folder)/opd_recon$(id).fits")
-# writefile([reconstruction.ϵ], "$(folder)/recon$(id).dat")
+writefits(observations_full.model_images, "$(folder)/models_ISH1x1_recon$(id).fits")
+writefits(observations_wfs.model_images, "$(folder)/models_ISH6x6_recon$(id).fits")
+writefits(object.object, "$(folder)/object_recon$(id).fits")
+writefits(atmosphere.opd, "$(folder)/opd_recon$(id).fits")
+writefile([reconstruction.ϵ], "$(folder)/recon$(id).dat")
 ###########################################

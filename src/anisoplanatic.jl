@@ -193,6 +193,7 @@ end
                     else
                         position2phase!(ϕ_slices[:, :, np, t, l, w], atmosphere.phase[:, :, l, w], extractors[t, np, l, w])
                     end
+                    # ϕ_slices .*= masks.masks[:, :, 1, w]
                     ϕ_composite[:, :, np, t, w] .+= ϕ_slices[:, :, np, t, l, w]
                 end
             end

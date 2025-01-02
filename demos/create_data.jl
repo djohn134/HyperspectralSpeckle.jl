@@ -2,7 +2,6 @@ include("../src/mfbd.jl")
 using Statistics
 using Main.MFBD
 
-
 ############# Data Parameters #############
 FTYPE = Float32;
 # folder = "/home/dan/Desktop/JASS_2024/tests";
@@ -55,7 +54,7 @@ masks = [masks_full, masks_wfs]
 
 ### Detector & Observations Parameters ####
 D = 3.6  # m
-fov = 8.0
+fov = 20.0
 pixscale_full = fov / image_dim
 pixscale_wfs = pixscale_full .* nsubaps_side
 qefile = "data/qe/prime-95b_qe.dat"
@@ -65,11 +64,11 @@ exptime = 5e-3
 noise = true
 ζ = 0.0
 ########## Create Optical System ##########
-filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
+filterV = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
 # filter = OpticalElement(λ=[0.0, 10000.0], response=[1.0, 1.0], FTYPE=FTYPE)
 beamsplitter = OpticalElement(λ=[0.0, 10000.0], response=[0.5, 0.5], FTYPE=FTYPE)
-# optics_full = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
-optics_full = OpticalSystem([filter], λ, verb=verb, FTYPE=FTYPE)
+optics_full = OpticalSystem([filterV, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
+# optics_full = OpticalSystem([filterV], λ, verb=verb, FTYPE=FTYPE)
 ######### Create Full-Ap Detector #########
 detector_full = Detector(
     qe=qe,
@@ -99,7 +98,7 @@ observations_full = Observations(
 )
 # observations = [observations_full]
 
-optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
+optics_wfs = OpticalSystem([filterV, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 detector_wfs = Detector(
     qe=qe,
     rn=rn,
@@ -134,8 +133,8 @@ objectfile = "data/OCNR2.fits"
 template = false
 mag = 4.0
 background_mag = Inf
-flux = mag2flux(λ, spectrum, mag, filter, D=D, ζ=ζ, exptime=exptime)
-background_flux = mag2flux(λ, ones(nλ), background_mag, filter, D=D, ζ=ζ, exptime=exptime)
+flux = mag2flux(λ, spectrum, mag, filterV, D=D, ζ=ζ, exptime=exptime)
+background_flux = mag2flux(λ, ones(nλ), background_mag, filterV, D=D, ζ=ζ, exptime=exptime)
 background_flux *= fov^2
 object_height = 515.0  # km
 ############## Create object ##############
@@ -156,7 +155,7 @@ writefits(object.object, "$(folder)/object_truth$(id).fits", header=header)
 ###########################################
 
 ########## Anisopatch Parameters ##########
-isoplanatic = true
+isoplanatic = false
 patch_overlap = 0.5
 patch_dim = 64
 ###### Create Anisoplanatic Patches #######
@@ -169,23 +168,21 @@ L0 = 100.0  # m
 Dr0_ref_vertical = 20.0
 Dr0_ref_composite = Dr0_ref_vertical * sec(ζ*pi/180)
 r0_ref_composite = D / Dr0_ref_composite
-# heights = [0.0, 7.0, 12.5]
-heights = [0.0]
+heights = [0.0, 7.0, 12.5]
 wind_speed = wind_profile_roberts2011(heights, ζ)
-# wind_direction = [45.0, 125.0, 135.0]
-wind_direction = [0.0]
+wind_direction = [45.0, 125.0, 135.0]
 wind = [wind_speed wind_direction]
 nlayers = length(heights)
 propagate = false
 common_opd = false
 r0_ref = composite_r0_to_layers(r0_ref_composite, heights, λ_ref, ζ)
-# r0 = (r0_composite / nlayers^(-3/5)) .* ones(nlayers)  # m
 # seeds = [713, 1212, 525118]
-seeds = [713]
+seeds = rand(1:1000, 3)
 Dmeta = D .+ (fov/206265) .* (heights .* 1000)
-sampling_nyquist_mperpix = (2*D / image_dim) .* ones(nlayers)
-sampling_nyquist_arcsecperpix = (fov / image_dim) .* (D ./ Dmeta)
-~, transmission = readtransmission("data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
+sampling_nyquist_mperpix = layer_nyquist_sampling_mperpix(D, image_dim, nlayers)
+sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heights, image_dim)
+# ~, transmission = readtransmission("data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
+transmission = ones(FTYPE, nλ)
 ############ Create Atmosphere ############
 atmosphere = Atmosphere(
     l0=l0,
@@ -212,15 +209,15 @@ create_phase_screens!(atmosphere, observations_full)
 # opd_smooth = calculate_smoothed_opd(atmosphere, observations_full)
 calculate_composite_pupil_eff(patches, atmosphere, observations, object, masks, build_dim=image_dim)
 atmosphere.opd .*= atmosphere.masks[:, :, :, 1]
-atmosphere.ϕ .*= atmosphere.masks
+atmosphere.phase .*= atmosphere.masks
 
 # writefits(atmosphere.masks, "$(folder)/layer_masks.fits", header=header)
 # writefits(observations_full.A, "$(folder)/Dr0_$(Dr0_composite)_ISH1x1_amplitude$(id).fits")
 # writefits(observations_wfs.A, "$(folder)/Dr0_$(Dr0_composite)_ISH$(nsubaps_side)x$(nsubaps_side)_amplitude$(id).fits")
 # [writefits(patches.A[dd], "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_amplitude$(id).fits", header=header) for dd=1:length(observations)]
-writefits(atmosphere.ϕ, "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_phase_full$(id).fits", header=header)
-# writefits(patches.ϕ_slices, "$(folder)/Dr0_$(round(Int64, Dr0_composite))_phase_slices$(id).fits", header=header)
-# writefits(patches.ϕ_composite, "$(folder)/Dr0_$(round(Int64, Dr0_composite))_phase_composite$(id).fits", header=header)
+# writefits(atmosphere.phase, "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_phase_full$(id).fits", header=header)
+# writefits(patches.phase_slices, "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_phase_slices$(id).fits", header=header)
+# writefits(patches.phase_composite, "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_phase_composite$(id).fits", header=header)
 # writefits(atmosphere.opd, "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_opd_full$(id).fits")
 # writefits(opd_smooth, "$(folder)/Dr0_$(round(Int64, Dr0_composite))_opd_full_smooth$(id).fits")
 ###########################################
@@ -230,6 +227,6 @@ create_images_eff(patches, observations, atmosphere, masks, object, build_dim=im
 [writefits(observations[dd].images, "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_images$(id).fits", header=header) for dd=1:length(observations)]
 # outfile = "$(folder)/Dr0_$(round(Int64, Dr0_composite))_ISH1x1_monochromatic_images$(id).fits"
 # writefits(observations_full.monochromatic_images, outfile, header=header)
-# outfile = "$(folder)/Dr0_$(round(Int64, Dr0_composite))_ISH1x1_psfs$(id).fits"
+# outfile = "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_ISH1x1_psfs$(id).fits"
 # writefits(patches.psfs[1], outfile, header=header)
 ###########################################

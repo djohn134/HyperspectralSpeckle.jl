@@ -222,7 +222,7 @@ end
     end
 end
 
-@views function fg_phase(x, g, observations, atmosphere, masks, patches, reconstruction)
+@views function fg_phase_mle(x, g, observations, atmosphere, masks, patches, reconstruction)
     ## Optimized but unreadable
     FTYPE = gettype(reconstruction)
     ndatasets = length(observations)
@@ -233,7 +233,7 @@ end
     fill!(helpers.g_threads_ϕ, zero(FTYPE))
     fill!(helpers.ϵ_threads, zero(FTYPE))
     update_phase_figure(x, atmosphere, reconstruction)
-
+ 
     for dd=1:ndatasets
         observation = observations[dd]
         optics = observation.optics
@@ -266,8 +266,8 @@ end
                             fill!(ϕ_composite[:, :, np, w], zero(FTYPE))
                             for l=1:atmosphere.nlayers
                                 ## Aliases don't allocate
-                                helpers.containers_sdim_real[:, :, tid] .= x[:, :, l]
-                                position2phase!(ϕ_slices[:, :, np, l, w], helpers.containers_sdim_real[:, :, tid], extractor[np, l, w])
+                                fill!(ϕ_slices[:, :, np, l, w], zero(FTYPE))
+                                position2phase!(ϕ_slices[:, :, np, l, w], x[:, :, l, w], extractor[np, l, w])
                                 ϕ_composite[:, :, np, w] .+= ϕ_slices[:, :, np, l, w]
                             end
                             ϕ_composite[:, :, np, w] .+= ϕ_static[:, :, w]
@@ -276,7 +276,7 @@ end
                                 ϕ_composite[:, :, np, w] .= helpers.k_conv[tid](ϕ_composite[:, :, np, w])
                             end
 
-                            pupil2psf!(Î_big, helpers.containers_builddim_real[:, :, tid], mask.masks[:, :, n, w], P[:, :, np, w], p[:, :, np, w], A[:, :, np, n, w], ϕ_composite[:, :, np, w], optics.response[w], atmosphere.transmission[w], scale_psf[w], helpers.ift[tid], refraction[w])
+                            pupil2psf!(Î_big, helpers.containers_builddim_real[:, :, tid], mask.masks[:, :, n, w], P[:, :, np, w], p[:, :, np, w], A[:, :, np, n, w], ϕ_composite[:, :, np, w], optics.response[w], atmosphere.transmission[w], scale_psf[w], helpers.ift[1][tid], refraction[w])
                             psfs[:, :, np, n, t, w₁] .+= Î_big ./ reconstruction.nλint
                         end
                     end
@@ -308,7 +308,7 @@ end
     return ϵ
 end
 
-@views function gradient_phase_gaussiannoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, nlayers, o_corr, entropy, npatches, smoothing, k_corr, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_sdim_real)
+@views function gradient_phase_mle_gaussiannoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, nlayers, o_corr, entropy, npatches, smoothing, k_corr, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_sdim_real)
     FTYPE = eltype(r)
     r .*= ω
     block_replicate!(c, r)
@@ -339,7 +339,7 @@ end
     end
 end
 
-@views function gradient_phase_mixednoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, nlayers, o_corr, entropy, npatches, smoothing, k_corr, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_sdim_real)
+@views function gradient_phase_mle_mixednoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, nlayers, o_corr, entropy, npatches, smoothing, k_corr, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_sdim_real)
     FTYPE = eltype(r)
     r .= 2 .* ω .* r .- (ω .* r).^2 .* entropy
     block_replicate!(c, r)
