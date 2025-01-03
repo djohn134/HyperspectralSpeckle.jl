@@ -14,8 +14,10 @@ function ConstantSchedule(fwhm)
 end
 
 function LinearSchedule(maxval, niters, minval)
+    m = (minval - maxval) / (niters - 1)
+    b = maxval - m
     function linear(x)
-        return max(maxval * (1 - (x-1)/niters), minval)
+        return max(m*x + b, minval)
     end
 
     return linear
@@ -245,7 +247,7 @@ mutable struct Reconstruction{T<:AbstractFloat}
             smoothing=false,
             maxFWHM=50.0,
             minFWHM=0.5,
-            fwhm_schedule=ReciprocalSchedule(maxFWHM, minFWHM),
+            fwhm_schedule=LinearSchedule(maxFWHM, niter_mfbd, minFWHM),
             regularizers=[],
             helpers=[],
             patch_helpers=[],
@@ -335,22 +337,20 @@ mutable struct Reconstruction{T<:AbstractFloat}
         end
         verb_levels = Dict("vm"=>vm, "vo"=>vo)
 
-        figs = ReconstructionFigures()
-        if wavefront_parameter == :phase_static
-            figs.static_phase_fig, figs.static_phase_ax, figs.static_phase_obs = plot_static_phase(observations, show=false)
-            if plot == true
+        if plot == true
+            figs = ReconstructionFigures()
+            if wavefront_parameter == :static_phase
+                figs.static_phase_fig, figs.static_phase_ax, figs.static_phase_obs = plot_static_phase(observations, show=false)
                 display(GLMakie.Screen(), figs.static_phase_fig)
-            end
-        elseif wavefront_parameter in [:phase, :opd]
-            figs.object_fig, figs.object_ax, figs.object_obs = plot_object(object, show=false)
-            plot_layers = getfield(Main, Symbol("plot_$(symbol2str[wavefront_parameter])"))
-            figs.wf_fig, figs.wf_ax, figs.wf_obs = plot_layers(atmosphere, show=false)
-            if plot == true
+            elseif wavefront_parameter in [:phase, :opd]
+                figs.object_fig, figs.object_ax, figs.object_obs = plot_object(object, show=false)
+                plot_layers = getfield(Main, Symbol("plot_$(symbol2str[wavefront_parameter])"))
+                figs.wf_fig, figs.wf_ax, figs.wf_obs = plot_layers(atmosphere, show=false)
                 display(GLMakie.Screen(), figs.object_fig)
                 display(GLMakie.Screen(), figs.wf_fig)
             end
         end
-        
+
         if verb == true
             println("")
         end
@@ -392,18 +392,22 @@ function reconstruct!(reconstruction, observations, atmosphere, object, masks, p
             end
 
             ## Reconstruct Phase
-            crit_wf = (x, g) -> reconstruction.fg_wf(x, g, current_observations, atmosphere, current_masks, patches, reconstruction)
+            crit_wf = (x, g) -> reconstruction.fg_wf(x, g, current_observations, atmosphere, current_masks, patches, reconstruction, object)
             vmlmb!(crit_wf, getproperty(atmosphere, reconstruction.wavefront_parameter), verb=reconstruction.verb_levels["vo"], fmin=0, mem=5, maxiter=reconstruction.maxiter, gtol=(0, reconstruction.grtol), ftol=(0, reconstruction.frtol), xtol=(0, reconstruction.xrtol), maxeval=reconstruction.maxeval["wf"])
-            update_layer_figure(atmosphere, reconstruction)
+            if reconstruction.plot == true
+                update_layer_figure(atmosphere, reconstruction)
+            end
 
             ## Reconstruct Object
             if reconstruction.verb_levels["vm"] == true
                 print("--> object ")
             end
 
-            crit_obj = (x, g) -> reconstruction.fg_object(x, g, current_observations, reconstruction, patches)
+            crit_obj = (x, g) -> reconstruction.fg_object(x, g, current_observations, reconstruction, patches, object)
             vmlmb!(crit_obj, object.object, lower=0, fmin=0, verb=reconstruction.verb_levels["vo"], maxiter=reconstruction.maxiter, gtol=(0, reconstruction.grtol), ftol=(0, reconstruction.frtol), xtol=(0, reconstruction.xrtol), maxeval=reconstruction.maxeval["object"])
-            update_object_figure(dropdims(sum(object.object, dims=3), dims=3), reconstruction)
+            if reconstruction.plot == true
+                update_object_figure(dropdims(sum(object.object, dims=3), dims=3), reconstruction)
+            end
 
             ## Compute final criterion
             if reconstruction.verb_levels["vm"] == true
@@ -420,7 +424,7 @@ function reconstruct!(reconstruction, observations, atmosphere, object, masks, p
         end
     end
 
-    if closeplots == true
+    if (reconstruction.plot == true) && (closeplots == true)
         GLMakie.closeall()
     end
 end
@@ -447,7 +451,7 @@ function reconstruct_static_phase!(reconstruction, observations, atmosphere, obj
             end
 
             ## Reconstruct Phase
-            crit_phase_static = (x, g) -> fg_phase_static(x, g, observations, atmosphere, masks, patches, reconstruction)
+            crit_phase_static = (x, g) -> fg_static_phase_mle(x, g, observations, atmosphere, masks, patches, reconstruction)
             vmlmb!(crit_phase_static, observations[dd].phase_static, verb=reconstruction.verb_levels["vo"], fmin=0, mem=5, maxiter=reconstruction.maxiter, gtol=(0, reconstruction.grtol), ftol=(0, reconstruction.frtol), xtol=(0, reconstruction.xrtol), maxeval=reconstruction.maxeval["wf"])
             update_static_phase_figure(atmosphere, reconstruction)
 
@@ -458,17 +462,16 @@ function reconstruct_static_phase!(reconstruction, observations, atmosphere, obj
 
             if write == true
                 writefits(observations[dd].model_images, "$(folder)/static_models_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_recon$(id).fits")
-                writefits(observations[dd].phase_static, "$(folder)/static_phase_recon$(id).fits")
+                writefits(observations[dd].static_phase, "$(folder)/static_phase_recon$(id).fits")
                 writefile([reconstruction.ϵ], "$(folder)/static_recon$(id).dat")
             end
             GC.gc()
         end
     end
 
-    if closeplots == true
+    if (reconstruction.plot == true) && (closeplots == true)
         GLMakie.closeall()
     end
-
 end
 
 @views function height_solve!(observations, atmosphere, object, patches, masks, reconstruction; hmin=ones(atmosphere.nlayers-1), hmax=30.0.*ones(atmosphere.nlayers-1), hstep=ones(atmosphere.nlayers-1), niters=1, verb=true)
@@ -508,7 +511,9 @@ end
                 println("ϵ: $(ϵ[l][h])")
                 atmosphere = deepcopy(atmosphere_original)
                 object = deepcopy(object_original)
-                update_heights_figure(height_trials, ϵ, atmosphere, reconstruction)
+                if reconstruction.plot == true
+                    update_heights_figure(height_trials, ϵ, atmosphere, reconstruction)
+                end
             end
             heights[order2fit[l]] = height_trials[l][argmin(ϵ[l])]
             change_heights!(patches, atmosphere, object, observations[end], masks[end], heights, reconstruction=reconstruction, verb=false)
@@ -517,9 +522,14 @@ end
         reconstruct!(reconstruction, observations, atmosphere, object, masks, patches, closeplots=false)
         object_original = deepcopy(object)
         atmosphere_original = deepcopy(atmosphere)
-        update_heights_figure(height_trials, ϵ, atmosphere, reconstruction)
+        if reconstruction.plot == true
+            update_heights_figure(height_trials, ϵ, atmosphere, reconstruction)
+        end
     end
-    GLMakie.closeall()
+
+    if reconstruction.plot == true
+        GLMakie.closeall()
+    end
 
     return ϵ, height_trials, atmosphere, object
 end

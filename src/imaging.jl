@@ -136,24 +136,6 @@ function create_polychromatic_image(object, psfs, λ, Δλ, dim; FTYPE=Float64)
     return image
 end
 
-# @views function create_polychromatic_image!(image, image_small::AbstractArray{<:AbstractFloat, 2}, image_big, object::AbstractArray{<:AbstractFloat, 3}, psfs, λ, Δλ)
-#     nλ = length(λ)
-#     for w=1:nλ
-#         create_monochromatic_image!(image_small, image_big, object[:, :, w], psfs[:, :, w])
-#         image .+= image_small
-#     end
-#     image .*= Δλ
-# end
-
-# @views function create_polychromatic_image!(image, image_small::AbstractArray{<:AbstractFloat, 2}, image_big, object::AbstractArray{<:AbstractFloat, 3}, psfs, λ, Δλ, conv_prealloc)
-#     nλ = length(λ)
-#     for w=1:nλ
-#         create_monochromatic_image!(image_small, image_big, object[:, :, w], psfs[:, :, w], conv_prealloc)
-#         image .+= image_small
-#     end
-#     image .*= Δλ
-# end
-
 @views function create_polychromatic_image!(image, image_small::AbstractArray{<:AbstractFloat, 2}, image_big, o_conv::AbstractVector{<:Function}, psfs, λ, Δλ)
     nλ = length(λ)
     for w=1:nλ
@@ -162,15 +144,6 @@ end
     end
     image .*= Δλ
 end
-
-# @views function create_polychromatic_image!(image, image_small::AbstractArray{<:AbstractFloat, 3}, image_big, object, psfs, λ, Δλ)
-#     nλ = length(λ)
-#     for w=1:nλ
-#         create_monochromatic_image!(image_small[:, :, w], image_big, object[:, :, w], psfs[:, :, w])
-#         image .+= image_small[:, :, w]
-#     end
-#     image .*= Δλ
-# end
 
 @views function create_polychromatic_image!(image, image_small::AbstractMatrix{<:AbstractFloat}, image_big, ω, object_patch, object::AbstractArray{<:AbstractFloat, 3}, psfs, λ, Δλ)
     nλ = length(λ)
@@ -182,16 +155,6 @@ end
     image .*= Δλ
 end
 
-# @views function create_polychromatic_image!(image, image_small::AbstractMatrix{<:AbstractFloat}, image_big, ω, object_patch, object::AbstractMatrix{<:AbstractFloat}, psfs, λ, Δλ)
-#     nλ = length(λ)
-#     for w=1:nλ
-#         object_patch .= ω .* object
-#         create_monochromatic_image!(image_small, image_big, object_patch, psfs[:, :, w])
-#         image .+= image_small
-#     end
-#     image .*= Δλ
-# end
-
 @views function create_polychromatic_image!(image, image_small::AbstractArray{<:AbstractFloat, 3}, image_big, ω, object_patch, object::AbstractArray{<:AbstractFloat, 3}, psfs, λ, Δλ)
     nλ = length(λ)
     for w=1:nλ
@@ -201,36 +164,6 @@ end
     end
     image .*= Δλ
 end
-
-# @views function create_polychromatic_image!(image, image_small::AbstractMatrix{<:AbstractFloat}, image_big, ω, object_patch, object::AbstractArray{<:AbstractFloat, 3}, psfs, λ, Δλ, conv_prealloc)
-#     nλ = length(λ)
-#     for w=1:nλ
-#         object_patch .= ω .* object[:, :, w]
-#         create_monochromatic_image!(image_small, image_big, object_patch, psfs[:, :, w], conv_prealloc)
-#         image .+= image_small
-#     end
-#     image .*= Δλ
-# end
-
-# @views function create_polychromatic_image!(image, image_small::AbstractMatrix{<:AbstractFloat}, image_big, ω, object_patch, object::AbstractMatrix{<:AbstractFloat}, psfs, λ, Δλ, conv_prealloc)
-#     nλ = length(λ)
-#     for w=1:nλ
-#         object_patch .= ω .* object
-#         create_monochromatic_image!(image_small, image_big, object_patch, psfs[:, :, w], conv_prealloc)
-#         image .+= image_small
-#     end
-#     image .*= Δλ
-# end
-
-# @views function create_polychromatic_image!(image, image_small::AbstractArray{<:AbstractFloat, 3}, image_big, ω, object_patch, object::AbstractArray{<:AbstractFloat, 3}, psfs, λ, Δλ, conv_prealloc)
-#     nλ = length(λ)
-#     for w=1:nλ
-#         object_patch .= ω .* object[:, :, w]
-#         create_monochromatic_image!(image_small[:, :, w], image_big, object_patch, psfs[:, :, w], conv_prealloc)
-#         image .+= image_small[:, :, w]
-#     end
-#     image .*= Δλ
-# end
 
 function add_noise!(image, rn, poisson::Bool; FTYPE=Float64)
     if poisson == true

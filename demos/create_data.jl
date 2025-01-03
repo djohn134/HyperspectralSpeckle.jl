@@ -1,6 +1,7 @@
-include("../src/mfbd.jl")
+include("../src/HyperspectralSpeckle.jl")
+using Main.HyperspectralSpeckle
 using Statistics
-using Main.MFBD
+
 
 ############# Data Parameters #############
 FTYPE = Float32;
@@ -132,7 +133,7 @@ objectfile = "data/OCNR2.fits"
 ~, spectrum = solar_spectrum(λ=λ)
 template = false
 mag = 4.0
-background_mag = Inf
+background_mag = 21.0
 flux = mag2flux(λ, spectrum, mag, filterV, D=D, ζ=ζ, exptime=exptime)
 background_flux = mag2flux(λ, ones(nλ), background_mag, filterV, D=D, ζ=ζ, exptime=exptime)
 background_flux *= fov^2

@@ -1,6 +1,6 @@
-module MFBD
+module HyperspectralSpeckle
 
-const symbol2str = Dict(:opd=>"opd", :phase=>"phase", :ϕ_static=>"static_phase", :gaussian=>"gaussian", :mixed=>"noise", :mle=>"mle", :mrl=>"mrl")
+const symbol2str = Dict(:opd=>"opd", :phase=>"phase", :static_phase=>"static_phase", :gaussian=>"gaussian", :mixed=>"noise", :mle=>"mle", :mrl=>"mrl")
 
 ## masks
 include("masks.jl")
@@ -25,7 +25,7 @@ export calculate_wfs_slopes
 ## object
 include("object.jl")
 export Object
-export mag2flux, template2object, interpolate_object, poly2object, poly2object!, object2poly, object2poly!
+export mag2flux, template2object, interpolate_object, poly2object, poly2object!, object2poly, object2poly!, fit_background
 
 ## atmosphere
 include("atmosphere.jl")

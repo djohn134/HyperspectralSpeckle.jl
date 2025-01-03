@@ -100,7 +100,7 @@ end
     nλ = length(λ)
     subaperture_masks = Array{FTYPE, 4}(undef, dim, dim, nsubaps_side^2, nλ)
     Threads.@threads :static for w=1:nλ
-        subaperture_masks[:, :, :, w] .= make_ish_masks(dim, nsubaps_side, λ[w], λ_nyquist=λ_nyquist, verb=~verb, FTYPE=FTYPE)
+        subaperture_masks[:, :, :, w] .= make_ish_masks(dim, nsubaps_side, λ[w], λ_nyquist=λ_nyquist, verb=false, FTYPE=FTYPE)
     end
 
     subap_flux = (((dim÷2) * λ_nyquist/λ[1]) / nsubaps_side)^2

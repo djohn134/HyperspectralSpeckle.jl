@@ -261,7 +261,7 @@ end
                                 ϕ_composite[:, :, np, w] .= helpers.k_conv[tid](ϕ_composite[:, :, np, w])
                             end
 
-                            pupil2psf!(Î_big, helpers.containers_builddim_real[:, :, tid], mask.masks[:, :, n, w], P[:, :, np, w], p[:, :, np, w], A[:, :, np, n, w], ϕ_composite[:, :, np, w], optics.response[w], atmosphere.transmission[w], scale_psf[w], helpers.ift[tid], refraction[w])
+                            pupil2psf!(Î_big, helpers.containers_builddim_real[:, :, tid], mask.masks[:, :, n, w], P[:, :, np, w], p[:, :, np, w], A[:, :, np, n, w], ϕ_composite[:, :, np, w], optics.response[w], atmosphere.transmission[w], scale_psf[w], helpers.ift[1][tid], refraction[w])
                             psfs[:, :, np, n, t, w₁] .+= Î_big ./ reconstruction.nλint
                         end
                     end

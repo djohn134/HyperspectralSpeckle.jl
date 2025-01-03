@@ -1,6 +1,10 @@
-using GLMakie
 using PerceptualColourMaps
-GLMakie.activate!()
+try
+    using GLMakie
+    GLMakie.activate!()
+catch
+    nothing
+end
 
 const PLOT_OPTIONS = (
     CMAP_OBJECT = cmap("L01"),
@@ -154,6 +158,14 @@ function update_phase_figure(phase, atmosphere, reconstruction)
     for l=1:atmosphere.nlayers
         figs.wf_obs[l][] = rotr90(phase[:, :, l, 1])
         reset_limits!(figs.wf_ax[l])
+    end
+end
+
+function update_static_phase_figure(phase, observations, reconstruction)
+    figs = reconstruction.figures
+    for dd=1:reconstruction.ndatasets
+        figs.static_phase_obs[dd][] = rotr90(phase[:, :, 1])
+        reset_limits!(figs.static_phase_ax[dd])
     end
 end
 

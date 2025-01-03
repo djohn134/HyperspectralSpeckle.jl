@@ -1,8 +1,9 @@
-include("../src/mfbd.jl");
-using Main.MFBD;
+include("../src/HyperspectralSpeckle.jl");
+using Main.HyperspectralSpeckle;
 using Statistics;
 # using LuckyImaging;
-show_the_sausage()
+# show_the_sausage()
+
 
 ############# Data Parameters #############
 FTYPE = Float32;
@@ -103,6 +104,7 @@ observations_wfs = Observations(
     FTYPE=FTYPE
 )
 observations = [observations_wfs, observations_full]
+background_flux = mean(fit_background.(observations))
 ###########################################
 
 ########### Load Full-Ap Masks ############
@@ -134,13 +136,14 @@ object = Object(
     height=object_height, 
     fov=fov,
     dim=observations_full.dim,
+    background_flux=background_flux,
     FTYPE=FTYPE
 )
 
-all_subap_images = block_replicate(dropdims(sum(observations_wfs.images, dims=(3, 4)), dims=(3, 4)), image_dim) .+ dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4))
+all_subap_images = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background_flux/observations_full.dim^2, 0)
 object.object = repeat(all_subap_images, 1, 1, nλ)
 object.object ./= sum(object.object)
-object.object .*= mean(sum(observations_full.images, dims=(1, 2, 3)) .+ sum(observations_wfs.images, dims=(1, 2, 3)))
+object.object .*= mean(sum(observations_full.images, dims=(1, 2, 3))) - background_flux
 # object.object = readfits("$(folder)/object_recon.fits")
 # object.object = readfits("$(folder)/object_truth.fits")
 # object.object = zeros(FTYPE, image_dim, image_dim, nλ)
@@ -165,7 +168,6 @@ atmosphere = Atmosphere(
     heights=heights, 
     sampling_nyquist_mperpix=sampling_nyquist_mperpix,
     sampling_nyquist_arcsecperpix=sampling_nyquist_arcsecperpix,
-    common_opd=false,
     λ=λ,
     λ_nyquist=λ_nyquist,
     λ_ref=λ_ref,
@@ -200,9 +202,6 @@ reconstruction = Reconstruction(
     noise_model=:gaussian,
     maxeval=Dict("wf"=>1000, "object"=>1000),
     smoothing=true,
-    minFWHM=0.5,
-    maxFWHM=50.0,
-    # fwhm_schedule=ReciprocalSchedule(5.0, 0.5),
     # fwhm_schedule=ConstantSchedule(0.5),
     grtol=1e-9,
     frtol=1e-9,
@@ -213,14 +212,12 @@ reconstruction = Reconstruction(
     FTYPE=FTYPE
 );
 reconstruct!(reconstruction, observations, atmosphere, object, masks, patches, write=false, folder=folder, id=id)
-# reconstruct_static_phase!(reconstruction, observations, atmosphere, object, masks, patches, write=true, folder=folder, id=id)
 ###########################################
 
 ###########################################
 ## Write isoplanatic phases and images ####
-writefits(observations_full.model_images, "$(folder)/models_ISH1x1_recon$(id).fits")
-writefits(observations_wfs.model_images, "$(folder)/models_ISH6x6_recon$(id).fits")
+[writefits(observations[dd].model_images, "$(folder)/models_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_recon$(id).fits") for dd=1:reconstruction.ndatasets]
 writefits(object.object, "$(folder)/object_recon$(id).fits")
-writefits(atmosphere.opd, "$(folder)/opd_recon$(id).fits")
+writefits(getfield(atmosphere, reconstruction.wavefront_parameter), "$(folder)/$(symbol2str[reconstruction.wavefront_parameter])_recon$(id).fits")
 writefile([reconstruction.ϵ], "$(folder)/recon$(id).dat")
 ###########################################

@@ -1,4 +1,5 @@
 using FITSIO
+using Statistics
 using NumericalIntegration
 using Interpolations: interpolate, Gridded, Linear
 
@@ -203,4 +204,23 @@ end
     for np in nonzero
         coeffs[np, :] .= poly_fit(λ, object[np, :], ncoeffs-1)
     end
+end
+
+@views function fit_background(observations)
+    FTYPE = gettype(observations)
+    backgrounds = zeros(FTYPE, observations.dim, observations.dim, observations.nsubaps, observations.nepochs)
+    mask = ones(FTYPE, observations.dim, observations.dim)
+    for n=1:observations.nsubaps
+        for t=1:observations.nepochs
+            for nn=1:10
+                backgrounds[:, :, n, t] .= fit_plane(observations.images[:, :, n, t], mask)
+                res = observations.images[:, :, n, t] .- backgrounds[:, :, n, t]
+                σ = std(res)
+                mask[res .> σ] .= FTYPE(0.0)
+            end
+            fill!(mask, FTYPE(1.0))
+        end
+    end
+
+    return Statistics.mean(dropdims(sum(backgrounds, dims=(1, 2)), dims=(1, 2)))
 end

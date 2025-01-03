@@ -134,23 +134,6 @@ end
     atmosphere.masks[atmosphere.masks .> 0] .= 1
 end
 
-@views function calculate_layer_masks_eff_alt!(atmosphere, observations_full, object, masks_full; verb=true)
-    if verb == true
-        println("Creating sausage masks for $(atmosphere.nlayers) layers at $(atmosphere.nλ) wavelengths")
-    end
-    FTYPE = gettype(atmosphere)
-    Dmeta = observations_full.D .+ (object.fov/206265) .* (atmosphere.heights .* 1000)
-    scaleby_wavelength = atmosphere.λ_nyquist ./ atmosphere.λ
-    scaleby_height = Dmeta ./ observations_full.D
-    calculate_layer_masks_iso!(atmosphere, observations_full, object, masks_full)
-    Threads.@threads for w=1:atmosphere.nλ
-        for l=1:atmosphere.nlayers
-            enlarger = create_extractor_operator((atmosphere.dim÷2, atmosphere.dim÷2), atmosphere.dim, atmosphere.dim, scaleby_height[l], scaleby_wavelength[w], FTYPE=FTYPE)
-            atmosphere.masks[:, :, l, w] .= enlarger * atmosphere.masks[:, :, l, w]
-        end
-    end
-end
-
 @views function calculate_composite_pupil_eff(patches, atmosphere, observations, object, masks; build_dim=observations.dim, verb=true)
     if verb == true
         println("Calculating composite complex pupil for $(length(observations)) channels")
