@@ -1,7 +1,6 @@
 using JLD2
 using FITSIO
 using Statistics
-using FourierTools
 using DelimitedFiles
 using ZernikePolynomials
 import Interpolations: LinearInterpolation, Line
@@ -298,6 +297,14 @@ function readspectrum(file; λ=[])
     return λ, flux
 end
 
+function ft(x)
+    return ifftshift(fft(ifftshft(x)))
+end
+
+function ift(x)
+    return fftshift(ifft(ifftshift(x)))
+end
+
 function fourier_filter(x, r; FTYPE=Float64)
     ## Keep frequencies inside r
     dim = size(x, 1)
@@ -322,6 +329,14 @@ function filter_to_rmse!(ϕ_smooth, ϕ, rms_target, mask, dim; FTYPE=Float64)
         i += 1
     end
     ϕ_smooth .= fourier_filter(ϕ, dim-argmin(abs.(rms .- rms_target)))
+end
+
+function get_plan(::Type{<:Real})
+    return plan_rfft
+end
+
+function get_plan(::Type{T}) where T
+    return plan_fft
 end
 
 function setup_fft(dim; FTYPE=Float64)
@@ -350,6 +365,52 @@ function setup_ifft(dim; FTYPE=Float64)
     return ifft!
 end
 
+function conv(u::AbstractArray{T, N}, v::AbstractArray{D, M}, dims=ntuple(+, min(N, M))) where {T, D, N, M}
+    return ifft(fft(u, dims) .* fft(v, dims), dims)
+end
+
+function conv(u::AbstractArray{<:Real, N}, v::AbstractArray{<:Real, M}, dims=ntuple(+, min(N, M))) where {N, M}
+    return irfft(rfft(u, dims) .* rfft(v, dims), size(u, dims[1]), dims)
+end
+
+function conv_psf(u::AbstractArray{T, N}, psf::AbstractArray{D, M}, dims=ntuple(+, min(N, M))) where {T, D, N, M}
+    return conv(u, ifftshift(psf, dims), dims)
+end
+
+function plan_conv_buffer(u::AbstractArray{T1, N}, v::AbstractArray{T2, M}, dims=ntuple(+, N);
+    kwargs...) where {T1, T2, N, M}
+    plan = get_plan(T1)
+    # do the preplanning step
+    P_u = plan(u, dims; kwargs...)
+    P_v = plan(v, dims)
+
+    u_buff = P_u * u
+    v_ft = P_v * v
+    uv_buff = u_buff .* v_ft
+
+    # for fourier space we need a new plan
+    P = plan(u .* v, dims; kwargs...)
+    P_inv = inv(P)
+    out_buff = P_inv * uv_buff
+
+    # construct the efficient conv function
+    # P and P_inv can be understood like matrices
+    # but their computation is fast
+    function conv(u, v_ft=v_ft)
+    mul!(u_buff, P_u, u)
+    uv_buff .= u_buff .* v_ft
+    mul!(out_buff, P_inv, uv_buff)
+    return out_buff
+    end
+
+    return v_ft, conv
+end
+
+function plan_conv_psf_buffer(u::AbstractArray{T, N}, psf::AbstractArray{T, M}, dims=ntuple(+, N);
+    kwargs...) where {T, N, M}
+return plan_conv_buffer(u, ifftshift(psf, dims), dims; kwargs...)
+end
+
 function setup_conv(dim; FTYPE=Float64)
     ft1 = setup_fft(dim, FTYPE=FTYPE)
     ft2 = setup_fft(dim, FTYPE=FTYPE)
@@ -364,6 +425,57 @@ function setup_conv(dim; FTYPE=Float64)
     end
 
     return conv!
+end
+
+function ccorr(u::AbstractArray{<:Real, N}, v::AbstractArray{<:Real, M}, 
+    dims=ntuple(+, min(N, M));
+    centered=false) where {N, M}
+    out = irfft(rfft(u, dims) .* conj.(rfft(v, dims)), size(u, dims[1]), dims)
+
+    if centered
+    return fftshift(out)
+    else
+    return out
+    end
+end
+
+function ccorr_psf(u::AbstractArray{T, N}, psf::AbstractArray{D, M}, dims=ntuple(+, min(N, M))) where {T, D, N, M}
+    return ccorr(u, ifftshift(psf, dims), dims)
+end
+
+function plan_ccorr_buffer(u::AbstractArray{T1, N}, v::AbstractArray{T2, M}, dims=ntuple(+, N);
+    kwargs...) where {T1, T2, N, M}
+    plan = get_plan(T1)
+    # do the preplanning step
+    P_u = plan(u, dims; kwargs...)
+    P_v = plan(v, dims)
+
+    u_buff = P_u * u
+    v_ft = P_v * v
+    conj!(v_ft)
+    uv_buff = u_buff .* v_ft
+
+    # for fourier space we need a new plan
+    P = plan(u .* v, dims; kwargs...)
+    P_inv = inv(P)
+    out_buff = P_inv * uv_buff
+
+    # construct the efficient conv function
+    # P and P_inv can be understood like matrices
+    # but their computation is fast
+    function ccorr(u, v_ft=v_ft)
+        mul!(u_buff, P_u, u)
+        uv_buff .= u_buff .* v_ft
+        mul!(out_buff, P_inv, uv_buff)
+        return out_buff
+    end
+
+    return v_ft, ccorr
+end
+
+function plan_ccorr_psf_buffer(u::AbstractArray{T, N}, psf::AbstractArray{T, M}, dims=ntuple(+, N);
+    kwargs...) where {T, N, M}
+    return plan_ccorr_buffer(u, ifftshift(psf, dims), dims; kwargs...)
 end
 
 function setup_corr(dim; FTYPE=Float64)
