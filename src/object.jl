@@ -4,7 +4,20 @@ using NumericalIntegration
 using Interpolations: interpolate, Gridded, Linear
 
 
-mutable struct Object{T<:AbstractFloat}
+abstract type AbstractObject end
+function display(object::T) where {T<:AbstractObject}
+    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Object\n"); print(Crayon(reset=true))
+    println("\tSize: $(object.dim)×$(object.dim) pixels")
+    println("\tFOV: $(object.fov)×$(object.fov) arcsec")
+    println("\tHeight: $(object.height) km")
+    println("\tFlux: $(object.flux) ph")
+    println("\tBackground flux: $(object.background_flux) ph")
+    println("\tWavelength: $(minimum(object.λ))—$(maximum(object.λ)) nm")
+    println("\tNumber of wavelengths: $(length(object.λ))")
+end
+
+mutable struct Object{T<:AbstractFloat} <: AbstractObject
+    dim::Int64
     λ::Vector{T}
     nλ::Int64
     height::T
@@ -14,7 +27,8 @@ mutable struct Object{T<:AbstractFloat}
     flux::T
     background_flux::T
     object::Array{T, 3}
-    function Object(; 
+    function Object(
+            object_arr;
             flux=Inf,
             background_flux=0,
             λ=[Inf], 
@@ -22,48 +36,22 @@ mutable struct Object{T<:AbstractFloat}
             fov=0,
             height=0,
             spectrum=[0],
-            objectfile="", 
-            template=false, 
             FTYPE=Float64,
             verb=true
         )
         nλ = length(λ)
         Δλ = (nλ == 1) ? 1.0 : (maximum(λ) - minimum(λ)) / (nλ - 1)
         sampling_arcsecperpix = fov / dim
-        if objectfile != ""
-            if verb == true
-                print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Object\n"); print(Crayon(reset=true))
-                println("\tSize: $(dim)x$(dim) pixels")
-                println("\tFOV: $(fov)×$(fov) arcsec")
-                println("\tHeight: $(height) km")
-                println("\tFlux: $(flux) ph")
-                println("\tBackground flux: $(background_flux) ph")
-                println("\tWavelength: $(minimum(λ))—$(maximum(λ)) nm")
-                println("\tNumber of wavelengths: $(length(λ))")
-            end
-            if template == true
-                object, ~ = template2object(objectfile, dim, λ, FTYPE=FTYPE)
-            else
-                object = repeat(block_reduce(readfits(objectfile, FTYPE=FTYPE), dim), 1, 1, nλ)
-            end
-
-            for w=1:nλ
-                object[:, :, w] .*= spectrum[w]
-            end
-            object ./= sum(object)
-            object .*= flux / Δλ
-            return new{FTYPE}(λ, nλ, height, fov, sampling_arcsecperpix, spectrum, flux, background_flux, object)
-        else
-            if verb == true
-                print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Object\n"); print(Crayon(reset=true))
-                println("\tSize: $(dim)x$(dim) pixels")
-                println("\tFOV: ($(fov)×$(fov)) arcsec")
-                println("\tHeight: $(height) km")
-                println("\tWavelength: $(minimum(λ))—$(maximum(λ)) nm")
-                println("\tNumber of wavelengths: $(length(λ))")
-            end
-            return new{FTYPE}(λ, nλ, height, fov, sampling_arcsecperpix, spectrum)
+        for w=1:nλ
+            object_arr[:, :, w] .*= spectrum[w]
         end
+        object_arr ./= sum(object_arr)
+        object_arr .*= flux / Δλ
+        object = new{FTYPE}(dim, λ, nλ, height, fov, sampling_arcsecperpix, spectrum, flux, background_flux, object_arr)
+        if verb == true
+            display(object)
+        end
+        return object
     end
 end
 

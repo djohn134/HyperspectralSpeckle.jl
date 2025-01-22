@@ -245,55 +245,38 @@ end
     for dd=1:ndatasets
         observation = observations[dd]
         optics = observation.optics
-        psfs = patches.psfs[dd]
         mask = masks[dd]
-        scale_psf = mask.scale_psfs
+        scale_psfs = mask.scale_psfs
         refraction = helpers.refraction[dd, :]
         refraction_adj = helpers.refraction_adj[dd, :]
         r = helpers.r[dd]
         ω = helpers.ω[dd]
-        Î_small = helpers.Î_small[dd]
         ϕ_static = observation.phase_static
         fill!(observation.model_images, zero(FTYPE))
-        fill!(psfs, zero(FTYPE))
         Threads.@threads :static for t=1:observation.nepochs
             tid = Threads.threadid()
+            iffts = helpers.ift[1][tid]
+            convs = helpers.convolve[1][tid]
             extractor = patch_helpers.extractor[t, :, :, :]
             extractor_adj = patch_helpers.extractor_adj[t, :, :, :]
-            Î_big = helpers.Î_big[:, :, tid]
-            A = patches.A[dd][:, :, :, :, t, :]
-            ϕ_slices = patches.phase_slices[:, :, :, t, :, :]
-            ϕ_composite = patches.phase_composite[:, :, :, t, :]
-            for n=1:observation.nsubaps
-                P = patch_helpers.P[:, :, :, :, tid]
-                p = patch_helpers.p[:, :, :, :, tid]
-                for np=1:patches.npatches
-                    for w₁=1:reconstruction.nλ
-                        for w₂=1:reconstruction.nλint 
-                            w = (w₁-1)*reconstruction.nλint + w₂
-                            fill!(ϕ_composite[:, :, np, w], zero(FTYPE))
-                            for l=1:atmosphere.nlayers
-                                ## Aliases don't allocate
-                                fill!(ϕ_slices[:, :, np, l, w], zero(FTYPE))
-                                position2phase!(ϕ_slices[:, :, np, l, w], x[:, :, l, w], extractor[np, l, w])
-                                ϕ_composite[:, :, np, w] .+= ϕ_slices[:, :, np, l, w]
-                            end
-                            ϕ_composite[:, :, np, w] .+= ϕ_static[:, :, w]
-                            
-                            if reconstruction.smoothing == true
-                                ϕ_composite[:, :, np, w] .= helpers.k_conv[tid](ϕ_composite[:, :, np, w])
-                            end
+            A = helpers.A[:, :, tid]
+            ϕ_slices = helpers.ϕ_slices[:, :, tid]
+            ϕ_composite = helpers.ϕ_composite[:, :, tid]
+            smoothing = helpers.k_conv[tid]
+            P = helpers.P[:, :, tid]
+            p = helpers.p[:, :, tid]
+            psf = helpers.psf[:, :, tid]
+            psf_temp = helpers.psf_temp[:, :, tid]
+            object_patch = helpers.object_patch[:, :, tid]
+            image_temp_big = helpers.image_temp_big[:, :, tid]
+            image_temp_small = helpers.image_temp_small[dd][:, :, tid]
 
-                            pupil2psf!(Î_big, helpers.containers_builddim_real[:, :, tid], mask.masks[:, :, n, w], P[:, :, np, w], p[:, :, np, w], A[:, :, np, n, w], ϕ_composite[:, :, np, w], optics.response[w], atmosphere.transmission[w], scale_psf[w], helpers.ift[1][tid], refraction[w])
-                            psfs[:, :, np, n, t, w₁] .+= Î_big ./ reconstruction.nλint
-                        end
-                    end
-                    create_polychromatic_image!(observation.model_images[:, :, n, t], Î_small[:, :, tid], Î_big, helpers.o_conv[:, np, tid], psfs[:, :, np, n, t, :], reconstruction.λ, reconstruction.Δλ)
-                end
+            for n=1:observation.nsubaps
+                create_image!(observation.model_images[:, :, n, t], image_temp_small, image_temp_big, psf, psf_temp, scale_psfs, object.object, patches.w, object_patch, mask.masks[:, :, n, :], A, P, p, refraction, iffts, convs, atmosphere.transmission, optics.response, ϕ_composite, ϕ_static, ϕ_slices, atmosphere.phase, smoothing, atmosphere.nlayers, extractor, atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, reconstruction.nλ, reconstruction.nλint, reconstruction.Δλ)
                 observation.model_images[:, :, n, t] .+= object.background_flux ./ observation.dim^2
                 ω[:, :, tid] .= reconstruction.weight_function(observation.entropy[n, t], observation.model_images[:, :, n, t], observation.detector.rn)
                 helpers.ϵ_threads[tid] += loglikelihood_gaussian(r[:, :, tid], observation.images[:, :, n, t], observation.model_images[:, :, n, t], ω[:, :, tid])
-                reconstruction.gradient_wf(helpers.g_threads_ϕ[:, :, :, :, tid], r[:, :, tid], ω[:, :, tid], P, p, helpers.c[:, :, tid], helpers.d[:, :, tid], helpers.d2[:, :, tid], reconstruction.λtotal, reconstruction.Δλtotal, reconstruction.nλ, reconstruction.nλint, optics.response, atmosphere.transmission, atmosphere.nlayers, helpers.o_corr[:, :, tid], observation.entropy[n, t], patches.npatches, reconstruction.smoothing, helpers.k_corr[tid], refraction_adj, extractor_adj, helpers.ift[1][tid], helpers.containers_builddim_real[:, :, tid], helpers.containers_sdim_real[:, :, tid])
+                # reconstruction.gradient_wf(helpers.g_threads_ϕ[:, :, :, :, tid], r[:, :, tid], ω[:, :, tid], P, p, helpers.c[:, :, tid], helpers.d[:, :, tid], helpers.d2[:, :, tid], reconstruction.λtotal, reconstruction.Δλtotal, reconstruction.nλ, reconstruction.nλint, optics.response, atmosphere.transmission, atmosphere.nlayers, helpers.o_corr[:, :, tid], observation.entropy[n, t], patches.npatches, reconstruction.smoothing, helpers.k_corr[tid], refraction_adj, extractor_adj, helpers.ift[1][tid], helpers.containers_builddim_real[:, :, tid], helpers.containers_sdim_real[:, :, tid])
             end
         end
     end

@@ -1,13 +1,28 @@
 using Random
 using Statistics
 using LazyAlgebra
-# using FourierTools
 using TwoDimensional
 using LinearInterpolators 
 import Interpolations: interpolate, Gridded, Linear
 
 
-mutable struct Atmosphere{T<:AbstractFloat}
+abstract type AbstractAtmosphere end
+
+function display(atmosphere::T) where {T<:AbstractAtmosphere}
+    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Atmosphere\n"); print(Crayon(reset=true))
+    println("\tNumber of layers: $(atmosphere.nlayers) layers")
+    println("\tWind speed: $(atmosphere.wind[:, 1]) m/s")
+    println("\tWind direction: $(atmosphere.wind[:, 2]) deg")
+    println("\tInner scale: $(atmosphere.l0) m")
+    println("\tOuter scale: $(atmosphere.L0) m")
+    println("\tFried paremeter: $(atmosphere.r0) m")
+    println("\tReference wavelength: $(atmosphere.λ_ref) nm")
+    println("\tWavelength: $(minimum(atmosphere.λ))—$(maximum(atmosphere.λ)) nm")
+    println("\tNumber of wavelengths: $(length(atmosphere.λ)) wavelengths")
+    println("\tPropagate: $(atmosphere.propagate)")
+end
+
+mutable struct Atmosphere{T<:AbstractFloat} <: AbstractAtmosphere
     nlayers::Int64
     l0::T
     L0::T
@@ -23,54 +38,48 @@ mutable struct Atmosphere{T<:AbstractFloat}
     nλ::Int64
     Δλ::T
     propagate::Bool
-    common_opd::Bool
     seeds::Vector{Int64}
     masks::Array{T, 4}
     dim::Int64
     positions::Array{T, 4}
     A::Array{T, 4}
-    opd::Array{T, 3}
     phase::Array{T, 4}
-    phase_slices::Array{T, 5}
-    phase_composite::Array{T, 4}
-    function Atmosphere(; 
-            l0=Inf,
-            L0=Inf,
-            r0=[Inf],
-            wind=[Inf], 
-            heights=[Inf],
-            transmission=[1.0],
-            sampling_nyquist_mperpix=[Inf],
-            sampling_nyquist_arcsecperpix=[Inf],
-            λ=[Inf], 
-            λ_nyquist=Inf,
-            λ_ref=Inf,
-            common_opd=true,
-            propagate=false,
-            seeds=[0],
-            verb=true,
-            FTYPE=Float64
+    function Atmosphere(
+        λ,
+        observations_full,
+        masks_full,
+        object,
+        patches;
+        l0=Inf,
+        L0=Inf,
+        r0=[Inf],
+        wind=[Inf], 
+        heights=[Inf],
+        transmission=[1.0],
+        sampling_nyquist_mperpix=[Inf],
+        sampling_nyquist_arcsecperpix=[Inf],
+        λ_nyquist=Inf,
+        λ_ref=Inf,
+        propagate=false,
+        seeds=[0],
+        create_screens=true,
+        verb=true,
+        FTYPE=Float64
         )
         nlayers = length(heights)
         nλ = length(λ)
         Δλ = (nλ == 1) ? 1.0 : (maximum(λ) - minimum(λ)) / (nλ - 1)        
         
+        atmosphere = new{FTYPE}(nlayers, l0, L0, r0, wind, heights, transmission, sampling_nyquist_mperpix, sampling_nyquist_arcsecperpix, λ, λ_nyquist, λ_ref, nλ, Δλ, propagate, seeds)
         if verb == true
-            print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Atmosphere\n"); print(Crayon(reset=true))
-            println("\tNumber of layers: $(nlayers) layers")
-            println("\tWind speed: $(wind[:, 1]) m/s")
-            println("\tWind direction: $(wind[:, 2]) deg")
-            println("\tInner scale: $(l0) m")
-            println("\tOuter scale: $(L0) m")
-            println("\tFried paremeter: $(r0) m")
-            println("\tReference wavelength: $(λ_ref) nm")
-            println("\tWavelength: $(minimum(λ))—$(maximum(λ)) nm")
-            println("\tNumber of wavelengths: $(length(λ)) wavelengths")
-            println("\tPropagate: $(propagate)")
-            println("\tCommon opd: $(common_opd)")
+            display(atmosphere)
         end
-
-        return new{FTYPE}(nlayers, l0, L0, r0, wind, heights, transmission, sampling_nyquist_mperpix, sampling_nyquist_arcsecperpix, λ, λ_nyquist, λ_ref, nλ, Δλ, propagate, common_opd, seeds)
+        calculate_atmosphere_parameters!(atmosphere, observations_full, masks_full, object, patches)
+        if create_screens == true
+            create_phase_screens!(atmosphere, observations_full)
+            atmosphere.phase .*= atmosphere.masks
+        end
+        return atmosphere
     end
 end
 
@@ -160,6 +169,10 @@ function generate_phase_screen_kolmogorov(atmosphere, observations; grow=4, FTYP
     return FTYPE.(ϕ)
 end
 
+function layer_scale_factors(layer_heights, object_height)
+    return 1 .- layer_heights ./ object_height
+end
+
 function calculate_screen_size!(atmosphere, observations; verb=true)
     Δpos_meters = observations.detector.exptime .* [atmosphere.wind[:, 1].*sin.(atmosphere.wind[:, 2].*pi/180) atmosphere.wind[:, 1].*cos.(atmosphere.wind[:, 2].*pi/180)]'
     Δpos_pix = Δpos_meters ./ minimum(atmosphere.sampling_nyquist_mperpix)
@@ -181,42 +194,6 @@ function calculate_screen_size!(atmosphere, observations, object, patches; verb=
     if verb == true
         println("\tSize: $(atmosphere.dim)×$(atmosphere.dim) pixels")
     end
-end
-
-@views function create_phase_screens!(atmosphere, observations; verb=true)
-    FTYPE = gettype(observations)
-
-    if verb == true
-        println("Creating $(atmosphere.nlayers) layers of size $(atmosphere.dim)×$(atmosphere.dim) with r0=$(atmosphere.r0) m (at $(atmosphere.λ_ref) nm)")
-    end
-
-    atmosphere.A = ones(FTYPE, observations.dim, observations.dim, observations.nepochs, atmosphere.nλ)
-    atmosphere.opd = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers)
-    atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
-    
-    if atmosphere.common_opd == true
-        ϕ_ref = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers)
-        sampling_ref = atmosphere.sampling_nyquist_mperpix .* (atmosphere.λ_ref/atmosphere.λ_nyquist)        
-        Threads.@threads for l=1:atmosphere.nlayers
-            ϕ_ref[:, :, l] .= generate_phase_screen_subharmonics(atmosphere.r0[l], atmosphere.dim, sampling_ref[l], atmosphere.L0, atmosphere.l0, seed=atmosphere.seeds[l], FTYPE=FTYPE)
-            atmosphere.opd[:, :, l] .= ϕ_ref[:, :, l] .* atmosphere.λ_ref / FTYPE(2pi)
-            atmosphere.opd[:, :, l] .-= mean(atmosphere.opd[findall(atmosphere.masks[:, :, l, 1] .> 0), l])
-            # atmosphere.opd[:, :, l] .-= fit_plane(atmosphere.opd[:, :, l], atmosphere.masks[:, :, l, 1])
-            for w=1:atmosphere.nλ
-                atmosphere.phase[:, :, l, w] .= FTYPE(2pi) / atmosphere.λ[w] .* atmosphere.opd[:, :, l]
-            end
-        end
-    else
-        Threads.@threads for w=1:atmosphere.nλ
-            sampling_mperpix = atmosphere.sampling_nyquist_mperpix .* (atmosphere.λ[w]/atmosphere.λ_nyquist)
-            r0λ = atmosphere.r0 * (atmosphere.λ[w] / atmosphere.λ_ref)^(6/5)
-            for l=1:atmosphere.nlayers
-                atmosphere.phase[:, :, l, w] .= generate_phase_screen_subharmonics(r0λ[l], atmosphere.dim, sampling_mperpix[l], atmosphere.L0, atmosphere.l0, seed=atmosphere.seeds[l], FTYPE=FTYPE)
-                atmosphere.phase[:, :, l, w] .-= mean(atmosphere.phase[findall(atmosphere.masks[:, :, l, w] .> 0), l, w])
-            end
-        end
-    end
-    # atmosphere.opd .*= atmosphere.masks[:, :, :, 1]
 end
 
 @views function calculate_pupil_positions!(atmosphere, observations; verb=true)
@@ -241,8 +218,55 @@ end
     end
 end
 
-function layer_scale_factors(layer_heights, object_height)
-    return 1 .- layer_heights ./ object_height
+function calculate_atmosphere_parameters!(atmosphere, observations_full, masks_full, object, patches)
+    calculate_screen_size!(atmosphere, observations_full, object, patches)
+    calculate_pupil_positions!(atmosphere, observations_full)
+    calculate_layer_masks!(patches, atmosphere, observations_full, object, masks_full)
+end
+
+@views function create_phase_screens!(atmosphere, observations; verb=true)
+    FTYPE = gettype(observations)
+
+    if verb == true
+        println("Creating $(atmosphere.nlayers) layers of size $(atmosphere.dim)×$(atmosphere.dim) with r0=$(atmosphere.r0) m (at $(atmosphere.λ_ref) nm)")
+    end
+
+    atmosphere.A = ones(FTYPE, observations.dim, observations.dim, observations.nepochs, atmosphere.nλ)
+    atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
+    
+    Threads.@threads for w=1:atmosphere.nλ
+        sampling_mperpix = atmosphere.sampling_nyquist_mperpix .* (atmosphere.λ[w]/atmosphere.λ_nyquist)
+        r0λ = atmosphere.r0 * (atmosphere.λ[w] / atmosphere.λ_ref)^(6/5)
+        for l=1:atmosphere.nlayers
+            atmosphere.phase[:, :, l, w] .= generate_phase_screen_subharmonics(r0λ[l], atmosphere.dim, sampling_mperpix[l], atmosphere.L0, atmosphere.l0, seed=atmosphere.seeds[l], FTYPE=FTYPE)
+            atmosphere.phase[:, :, l, w] .-= mean(atmosphere.phase[findall(atmosphere.masks[:, :, l, w] .> 0), l, w])
+        end
+    end
+end
+
+@views function calculate_layer_masks!(patches, atmosphere, observations_full, object, masks_full; verb=true)
+    if verb == true
+        println("Creating sausage masks for $(atmosphere.nlayers) layers at $(atmosphere.nλ) wavelengths")
+    end
+    FTYPE = gettype(atmosphere)
+    scaleby_wavelength = atmosphere.λ_nyquist ./ atmosphere.λ
+    scaleby_height = layer_scale_factors(atmosphere.heights, object.height)
+    buffer = zeros(FTYPE, atmosphere.dim, atmosphere.dim, Threads.nthreads())
+    layer_mask = zeros(Bool, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ, Threads.nthreads())
+    deextractors = create_patch_extractors_adjoint(patches, atmosphere, observations_full, object, scaleby_wavelength, scaleby_height)
+    Threads.@threads :static for t=1:observations_full.nepochs
+        tid = Threads.threadid()
+        for np=1:patches.npatches
+            for w=1:atmosphere.nλ
+                for l=1:atmosphere.nlayers
+                    position2phase!(buffer[:, :, tid], masks_full.masks[:, :, 1, w], deextractors[t, np, l, w])
+                    layer_mask[:, :, l, w, tid] .= layer_mask[:, :, l, w, tid] .|| round.(Bool, buffer[:, :, tid])
+                end
+            end
+        end
+    end
+
+    atmosphere.masks = min.(1.0, dropdims(sum(layer_mask, dims=5), dims=5))
 end
 
 function air_refractive_index_minus_one(λ; pressure=69.328, temperature=293.15, H2O_pressure=1.067)

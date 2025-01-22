@@ -351,6 +351,19 @@ function setup_fft(dim; FTYPE=Float64)
     return fft!
 end
 
+function setup_rfft(dim; FTYPE=Float64)
+    container1 = Matrix{FTYPE}(undef, dim, dim)
+    container2 = Matrix{Complex{FTYPE}}(undef, dim÷2+1, dim)
+    prft = plan_rfft(container1)
+    function rfft!(out, in)
+        fftshift!(container1, in)
+        mul!(container2, prft, container1)
+        circshift!(out, container2, (0, dim÷2))
+    end
+
+    return rfft!
+end
+
 function setup_ifft(dim; FTYPE=Float64)
     scale_ifft = FTYPE(dim)
     container = Matrix{Complex{FTYPE}}(undef, dim, dim)
@@ -363,6 +376,21 @@ function setup_ifft(dim; FTYPE=Float64)
     end
 
     return ifft!
+end
+
+function setup_irfft(dim; FTYPE=Float64)
+    scale_irfft = FTYPE(dim)
+    container1 = Matrix{Complex{FTYPE}}(undef, dim÷2+1, dim)
+    container2 = Matrix{FTYPE}(undef, dim, dim)
+    pirft = plan_irfft(container1, dim)
+    function irfft!(out, in)
+        circshift!(container1, in, (0, dim÷2))
+        mul!(container2, pirft, container1)
+        fftshift!(out, container2)
+        out .*= scale_irfft
+    end
+
+    return irfft!
 end
 
 function conv(u::AbstractArray{T, N}, v::AbstractArray{D, M}, dims=ntuple(+, min(N, M))) where {T, D, N, M}
@@ -411,20 +439,36 @@ function plan_conv_psf_buffer(u::AbstractArray{T, N}, psf::AbstractArray{T, M}, 
 return plan_conv_buffer(u, ifftshift(psf, dims), dims; kwargs...)
 end
 
-function setup_conv(dim; FTYPE=Float64)
+function setup_conv_c2c(dim; FTYPE=Float64)
     ft1 = setup_fft(dim, FTYPE=FTYPE)
     ft2 = setup_fft(dim, FTYPE=FTYPE)
     ift1 = setup_ifft(dim, FTYPE=FTYPE)
     container1 = Matrix{Complex{FTYPE}}(undef, dim, dim)
     container2 = Matrix{Complex{FTYPE}}(undef, dim, dim)
-    function conv!(out, in1, in2)
+    function conv_c2c!(out, in1, in2)
         ft1(container1, in1)
         ft2(container2, in2)
         container1 .*= container2
         ift1(out, container1)
     end
 
-    return conv!
+    return conv_c2c!
+end
+
+function setup_conv_r2r(dim; FTYPE=Float64)
+    rft1 = setup_rfft(dim, FTYPE=FTYPE)
+    rft2 = setup_rfft(dim, FTYPE=FTYPE)
+    irft1 = setup_irfft(dim, FTYPE=FTYPE)
+    container1 = Matrix{Complex{FTYPE}}(undef, dim÷2+1, dim)
+    container2 = Matrix{Complex{FTYPE}}(undef, dim÷2+1, dim)
+    function conv_r2r!(out, in1, in2)
+        rft1(container1, in1)
+        rft2(container2, in2)
+        container1 .*= container2
+        irft1(out, container1)
+    end
+
+    return conv_r2r!
 end
 
 function ccorr(u::AbstractArray{<:Real, N}, v::AbstractArray{<:Real, M}, 
@@ -433,9 +477,9 @@ function ccorr(u::AbstractArray{<:Real, N}, v::AbstractArray{<:Real, M},
     out = irfft(rfft(u, dims) .* conj.(rfft(v, dims)), size(u, dims[1]), dims)
 
     if centered
-    return fftshift(out)
+        return fftshift(out)
     else
-    return out
+        return out
     end
 end
 
@@ -511,7 +555,7 @@ function setup_autocorr(dim; FTYPE=Float64)
 end
 
 function setup_operator_mul(dim; FTYPE=Float64)
-    container = Matrix{Complex{FTYPE}}(undef, dim, dim)
+    container = Matrix{FTYPE}(undef, dim, dim)
     function apply!(in, operator)
         mul!(container, operator, in)
         return container

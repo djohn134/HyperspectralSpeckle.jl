@@ -23,6 +23,37 @@ const ELEMENT_FILENAMES = Dict(
     "Thorlabs:DMLP805P-reflected"=>"data/optics/DMLP805-reflected.dat",
 )
 
+abstract type AbstractDetector end
+abstract type AbstractOpticalSystem end
+abstract type AbstractObservations end
+function display(detector::T) where {T<:AbstractDetector}
+    ~, DTYPE = gettypes(detector)
+    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Detector\n"); print(Crayon(reset=true))
+    println("\tBit Depth: $(DTYPE)")
+    println("\tRN: $(detector.rn) e⁻")
+    println("\tGain: $(detector.gain) e⁻/ADU")
+    println("\tSaturation: $(detector.saturation)")
+    println("\tExposure time: $(detector.exptime) s")
+    println("\tPlate Scale: $(detector.pixscale) arcsec/pix")
+    println("\tWavelength: $(minimum(detector.λ))—$(maximum(detector.λ)) nm")
+    println("\tNyquist sampled wavelength: $(detector.λ_nyquist) nm")
+end
+
+function display(optical_system::T) where {T<:AbstractOpticalSystem}
+    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Optical system\n"); print(Crayon(reset=true))
+    println("\tNumber of elements: $(length(optical_system.elements))")
+    println("\tWavelength: $(minimum(optical_system.λ))—$(maximum(optical_system.λ)) nm")
+end
+
+function display(observations::T) where {T<:AbstractObservations}
+    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Observations\n"); print(Crayon(reset=true))
+    println("\tImage Size: $(observations.dim)x$(observations.dim) pixels")
+    println("\tNumber of frames: $(observations.nepochs)")
+    println("\tNumber of subapertures: $(observations.nsubaps_side)×$(observations.nsubaps_side) subapertures")
+    println("\tTelescope Diameter: $(observations.D) m")
+    println("\tZenith angle: $(observations.ζ) deg")
+end
+
 struct OpticalElement{T<:AbstractFloat}
     name::String
     λ::Vector{T}
@@ -41,7 +72,7 @@ struct OpticalElement{T<:AbstractFloat}
             λ₀, response = readfile(ELEMENT_FILENAMES["$name"])
             if λ != []
                 itp = LinearInterpolation(λ₀, response, extrapolation_bc=Line())
-                response = itp(λ)
+                response = max.(0.0, itp(λ))
             else
                 λ = λ₀
             end
@@ -51,7 +82,7 @@ struct OpticalElement{T<:AbstractFloat}
     end
 end
 
-struct Detector{T<:AbstractFloat, S<:Real}
+struct Detector{T<:AbstractFloat, S<:Real} <: AbstractDetector
     λ::Vector{T}
     λ_nyquist::T
     qe::Vector{T}
@@ -73,22 +104,15 @@ struct Detector{T<:AbstractFloat, S<:Real}
             FTYPE=Float64,
             DTYPE=FTYPE
         )
+        detector = new{FTYPE, DTYPE}(λ, λ_nyquist, qe, rn, gain, saturation, pixscale, exptime)
         if verb == true
-            print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Detector\n"); print(Crayon(reset=true))
-            println("\tBit Depth: $(DTYPE)")
-            println("\tRN: $(rn) e⁻")
-            println("\tGain: $(gain) e⁻/ADU")
-            println("\tSaturation: $(saturation)")
-            println("\tExposure time: $(exptime) s")
-            println("\tPlate Scale: $(pixscale) arcsec/pix")
-            println("\tWavelength: $(minimum(λ))—$(maximum(λ)) nm")
-            println("\tNyquist sampled wavelength: $(λ_nyquist) nm")
+            display(detector)
         end
-        return new{FTYPE, DTYPE}(λ, λ_nyquist, qe, rn, gain, saturation, pixscale, exptime)
+        return detector
     end
 end
 
-struct OpticalSystem{T<:AbstractFloat}
+struct OpticalSystem{T<:AbstractFloat} <: AbstractOpticalSystem
     elements::Vector{OpticalElement{T}}
     λ::Vector{T}
     response::Vector{T}
@@ -100,27 +124,26 @@ struct OpticalSystem{T<:AbstractFloat}
             verb=true,
             FTYPE=Float64
         )
-        if verb == true
-            print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Optical system\n"); print(Crayon(reset=true))
-            println("\tNumber of elements: $(length(elements))")
-            println("\tWavelength: $(minimum(λ))—$(maximum(λ)) nm")
-        end
 
         xflip = false
         yflip = false
         response = ones(FTYPE, length(λ))
         for element in elements
             itp = LinearInterpolation(element.λ, element.response, extrapolation_bc=Line())
-            response .*= itp(λ)
+            response .*= max.(0.0, itp(λ))
             xflip = xflip ⊻ element.xflip
             yflip = yflip ⊻ element.yflip
         end
 
-        return new{FTYPE}(elements, λ, response, xflip, yflip)
+        optical_system =  new{FTYPE}(elements, λ, response, xflip, yflip)
+        if verb == true
+            display(optical_system)
+        end
+        return optical_system
     end
 end
 
-mutable struct Observations{T<:AbstractFloat, S<:Real}
+mutable struct Observations{T<:AbstractFloat, S<:Real} <: AbstractObservations
     optics::OpticalSystem{T}
     phase_static::Array{T, 3}
     detector::Detector{T, S}
@@ -133,7 +156,6 @@ mutable struct Observations{T<:AbstractFloat, S<:Real}
     images::Array{S, 4}
     entropy::Matrix{T}
     model_images::Array{T, 4}
-    monochromatic_images::Array{T, 5}
     w::Vector{Int64}
     function Observations(
             optics,
@@ -145,37 +167,38 @@ mutable struct Observations{T<:AbstractFloat, S<:Real}
             nsubaps_side=1,
             dim=0,
             ϕ_static=[;;;],
-            datafile::String="",
             verb=true,
             FTYPE=Float64
         )
         DTYPE = gettypes(detector)[2]
         optics.response .*= detector.qe
-        if (datafile != "")
-            images, nsubaps, nepochs, dim = readimages(datafile, FTYPE=FTYPE)
-            entropy = [calculate_entropy(images[:, :, n, t]) for n=1:nsubaps, t=1:nepochs]
-            if verb == true
-                print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Observations\n"); print(Crayon(reset=true))
-                print("\tFile: "); print(Crayon(foreground=:red), "$(datafile)\n"); print(Crayon(reset=true));
-                println("\tImage Size: $(dim)x$(dim) pixels")
-                println("\tNumber of frames: $(nepochs)")
-                println("\tNumber of subapertures: $(nsubaps_side)×$(nsubaps_side) subapertures")
-                println("\tTelescope Diameter: $(D) m")
-                println("\tZenith angle: $(ζ) deg")
-            end
-            return new{FTYPE, DTYPE}(optics, ϕ_static, detector, ζ, D, nepochs, nsubaps, nsubaps_side, dim, images, entropy)
-        else
-            if verb == true
-                print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Observations\n"); print(Crayon(reset=true))
-                println("\tImage Size: $(dim)x$(dim) pixels")
-                println("\tNumber of frames: $(nepochs)")
-                println("\tNumber of subapertures: $(nsubaps_side)×$(nsubaps_side) subapertures")
-                println("\tTelescope Diameter: $(D) m")
-                println("\tZenith angle: $(ζ) deg")
-            end
-            return new{FTYPE, DTYPE}(optics, ϕ_static, detector, ζ, D, nepochs, nsubaps, nsubaps_side, dim)
+        observations = new{FTYPE, DTYPE}(optics, ϕ_static, detector, ζ, D, nepochs, nsubaps, nsubaps_side, dim)
+        if verb == true
+            display(observations)
         end
+        return observations
     end
+    function Observations(
+        images,
+        optics,
+        detector;
+        ζ=Inf,
+        D=Inf,
+        nsubaps_side=1,
+        ϕ_static=[;;;],
+        verb=true,
+        FTYPE=Float64
+    )
+    dim, ~, nsubaps, nepochs = size(images)
+    entropy = [calculate_entropy(images[:, :, n, t]) for n=1:nsubaps, t=1:nepochs]
+    DTYPE = gettypes(detector)[2]
+    optics.response .*= detector.qe
+    observations = new{FTYPE, DTYPE}(optics, ϕ_static, detector, ζ, D, nepochs, nsubaps, nsubaps_side, dim, images, entropy)
+    if verb == true
+        display(observations)
+    end
+    return observations
+end
 end
 
 @views function calculate_wfs_slopes(observations_wfs)

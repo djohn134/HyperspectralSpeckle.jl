@@ -4,6 +4,25 @@ using LinearAlgebra
 using OptimPackNextGen
 
 
+abstract type AbstractReconstruction end
+function display(reconstruction::T) where {T<:AbstractReconstruction}
+    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Reconstruction\n"); print(Crayon(reset=true))
+    println("\tImage build size: $(reconstruction.build_dim)×$(reconstruction.build_dim) pixels")
+    println("\tWavelength: $(minimum(reconstruction.λ))—$(maximum(reconstruction.λ)) nm")
+    println("\tNumber of wavelength: $(reconstruction.nλ)")
+    println("\tNumber of integrated wavelengths: $(reconstruction.nλint)")
+    println("\tNumber of data channels: $(reconstruction.ndatasets)")
+    println("\tWavefront Parameter: $(symbol2str[reconstruction.wavefront_parameter])")
+    println("\tNoise weighting: $(reconstruction.weight_function)")
+    println("\tObject gradient function: $(reconstruction.gradient_object)")
+    println("\tWavefront gradient function: $(reconstruction.gradient_wf)")
+    println("\tNumber of MFBD cycles: $(reconstruction.niter_mfbd)")
+    println("\tMax iterations: $(reconstruction.maxiter)") 
+    println("\tMax evaluations: $(reconstruction.maxeval["wf"]) (wf), $(reconstruction.maxeval["object"]) (object)")
+    println("\tSmoothing: $(reconstruction.smoothing) (schedule: $(reconstruction.fwhm_schedule), Max FWHM: $(reconstruction.maxFWHM), Min FWHM: $(reconstruction.minFWHM))")
+    println("\tStopping criteria: $(reconstruction.grtol) (grtol), $(reconstruction.frtol) (frtol), $(reconstruction.xrtol) (xrtol)")
+end
+
 function ConstantSchedule(fwhm)
     function constant(x)
         return fwhm
@@ -40,21 +59,25 @@ mutable struct Helpers{T<:AbstractFloat}
     convolve::Vector{Vector{Function}}
     correlate::Vector{Vector{Function}}
     autocorr::Vector{Vector{Function}}
+    A::Array{T, 3}
     ϕ_full::Array{T, 3}
-    ϕ_slice::Array{T, 3}
+    ϕ_slices::Array{T, 3}
     ϕ_composite::Array{T, 3}
     o_conv::Array{Function, 3}
     o_corr::Array{Function, 3}
     smoothing_kernel::Matrix{T}
     k_conv::Vector{Function}
     k_corr::Vector{Function}
-    P::Array{Complex{T}, 4}
-    p::Array{Complex{T}, 4}
+    P::Array{Complex{T}, 3}
+    p::Array{Complex{T}, 3}
     c::Array{T, 3}
     d::Array{Complex{T}, 3}
     d2::Array{T, 3}
-    Î_big::Array{T, 3}
-    Î_small::Vector{Array{T, 3}}
+    psf::Array{T, 3}
+    psf_temp::Array{T, 3}
+    object_patch::Array{T, 3}
+    image_temp_big::Array{T, 3}
+    image_temp_small::Vector{Array{T, 3}}
     r::Vector{Array{T, 3}}
     ω::Vector{Array{T, 3}}
     mask_acf::Vector{Matrix{T}}
@@ -88,7 +111,7 @@ mutable struct Helpers{T<:AbstractFloat}
         autocorr_threads = Vector{Vector{Function}}(undef, ndatasets+1)
         fft_threads[1] = [setup_fft(build_dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
         ifft_threads[1] = [setup_ifft(build_dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
-        conv_threads[1] = [setup_conv(build_dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
+        conv_threads[1] = [setup_conv_r2r(build_dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
         corr_threads[1] = [setup_corr(build_dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
         autocorr_threads[1] = [setup_autocorr(build_dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
 
@@ -100,20 +123,24 @@ mutable struct Helpers{T<:AbstractFloat}
         g_threads_opd = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, nthreads)
         g_threads_ϕ = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ, nthreads)
         g_threads_obj = zeros(FTYPE, build_dim, build_dim, object.nλ, nthreads)
+        A = Array{FTYPE, 3}(undef, build_dim, build_dim, nthreads)
         ϕ_full = zeros(FTYPE, atmosphere.dim, atmosphere.dim, nthreads)
-        ϕ_slice = Array{FTYPE, 3}(undef, build_dim, build_dim, nthreads)
+        ϕ_slices = Array{FTYPE, 3}(undef, build_dim, build_dim, nthreads)
         ϕ_composite = zeros(FTYPE, build_dim, build_dim, nthreads)
         o_conv = Array{Function, 3}(undef, object.nλ, patches.npatches, nthreads)
         o_corr = Array{Function, 3}(undef, object.nλ, patches.npatches, nthreads)
         smoothing_kernel = zeros(FTYPE, build_dim, build_dim)
         k_conv = Vector{Function}(undef, nthreads)
         k_corr = Vector{Function}(undef, nthreads)
-        P = zeros(Complex{FTYPE}, build_dim, build_dim, nλtotal, nthreads)
-        p = zeros(Complex{FTYPE}, build_dim, build_dim, nλtotal, nthreads)
-        Î_big = zeros(FTYPE, build_dim, build_dim, nthreads)
+        P = zeros(Complex{FTYPE}, build_dim, build_dim, nthreads)
+        p = zeros(Complex{FTYPE}, build_dim, build_dim, nthreads)
+        object_patch = zeros(FTYPE, build_dim, build_dim, nthreads)
+        image_temp_big = zeros(FTYPE, build_dim, build_dim, nthreads)
         c = zeros(FTYPE, build_dim, build_dim, nthreads)
         d = zeros(Complex{FTYPE}, build_dim, build_dim, nthreads)
         d2 = zeros(FTYPE, build_dim, build_dim, nthreads)
+        psf = zeros(FTYPE, build_dim, build_dim, nthreads)
+        psf_temp = zeros(FTYPE, build_dim, build_dim, nthreads)
         containers_builddim_cplx = zeros(Complex{FTYPE}, build_dim, build_dim, nthreads)
         containers_builddim_real = zeros(FTYPE, build_dim, build_dim, nthreads)
         containers_sdim_real = zeros(FTYPE, atmosphere.dim, atmosphere.dim, nthreads)
@@ -122,7 +149,7 @@ mutable struct Helpers{T<:AbstractFloat}
         r = Vector{Array{FTYPE, 3}}(undef, ndatasets)
         ω = Vector{Array{FTYPE, 3}}(undef, ndatasets)
         mask_acf = Vector{Matrix{FTYPE}}(undef, ndatasets)
-        Î_small = Vector{Array{FTYPE, 3}}(undef, ndatasets)
+        image_temp_small = Vector{Array{FTYPE, 3}}(undef, ndatasets)
         containers_pdim_real = Vector{Array{FTYPE, 3}}(undef, ndatasets)
         containers_pdim_cplx = Vector{Array{Complex{FTYPE}, 3}}(undef, ndatasets)
 
@@ -136,7 +163,7 @@ mutable struct Helpers{T<:AbstractFloat}
         for dd=1:ndatasets
             fft_threads[dd+1] = [setup_fft(observations[dd].dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
             ifft_threads[dd+1] = [setup_ifft(observations[dd].dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
-            conv_threads[dd+1] = [setup_conv(observations[dd].dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
+            conv_threads[dd+1] = [setup_conv_r2r(observations[dd].dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
             corr_threads[dd+1] = [setup_corr(observations[dd].dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
             autocorr_threads[dd+1] = [setup_autocorr(observations[dd].dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
 
@@ -145,7 +172,7 @@ mutable struct Helpers{T<:AbstractFloat}
             mask_acf[dd] = ones(FTYPE, observations[dd].dim, observations[dd].dim)
             # mask_acf[dd][observations[dd].dim÷2+1 - observations[dd].dim÷4:observations[dd].dim÷2+1 + observations[dd].dim÷4, observations[dd].dim÷2+1 - observations[dd].dim÷4:observations[dd].dim÷2+1 + observations[dd].dim÷4] .= 1
             mask_acf[dd][observations[dd].dim÷2+1, observations[dd].dim÷2+1] = 0
-            Î_small[dd] = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
+            image_temp_small[dd] = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
             containers_pdim_real[dd] = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
             containers_pdim_cplx[dd] = zeros(Complex{FTYPE}, observations[dd].dim, observations[dd].dim, nthreads)
             scaleby_wavelength = [observations[dd].detector.λ_nyquist / λtotal[w] for w=1:nλtotal]
@@ -162,7 +189,7 @@ mutable struct Helpers{T<:AbstractFloat}
             end
         end
 
-        return new{FTYPE}(extractor, extractor_adj, refraction, refraction_adj, fft_threads, ifft_threads, conv_threads, corr_threads, autocorr_threads, ϕ_full, ϕ_slice, ϕ_composite, o_conv, o_corr, smoothing_kernel, k_conv, k_corr, P, p, c, d, d2, Î_big, Î_small, r, ω, mask_acf, ϵ_threads, g_threads_obj, g_threads_opd, g_threads_ϕ, containers_builddim_real, containers_builddim_cplx, containers_sdim_real, containers_sdim_cplx, containers_pdim_real, containers_pdim_cplx)
+        return new{FTYPE}(extractor, extractor_adj, refraction, refraction_adj, fft_threads, ifft_threads, conv_threads, corr_threads, autocorr_threads, A, ϕ_full, ϕ_slices, ϕ_composite, o_conv, o_corr, smoothing_kernel, k_conv, k_corr, P, p, c, d, d2, psf, psf_temp, object_patch, image_temp_big, image_temp_small, r, ω, mask_acf, ϵ_threads, g_threads_obj, g_threads_opd, g_threads_ϕ, containers_builddim_real, containers_builddim_cplx, containers_sdim_real, containers_sdim_cplx, containers_pdim_real, containers_pdim_cplx)
     end
 end
 
@@ -187,7 +214,7 @@ mutable struct PatchHelpers{T<:AbstractFloat}
     end
 end
 
-mutable struct Reconstruction{T<:AbstractFloat}
+mutable struct Reconstruction{T<:AbstractFloat} <: AbstractReconstruction
     λ::Vector{T}
     λtotal::Vector{T}
     nλ::Int64
@@ -216,6 +243,8 @@ mutable struct Reconstruction{T<:AbstractFloat}
     maxeval::Dict{String, Int64}
     regularizers::Regularizers{T}
     smoothing::Bool
+    minFWHM::T
+    maxFWHM::T
     fwhm_schedule::Function
     helpers::Helpers{T}
     patch_helpers::PatchHelpers{T}
@@ -269,24 +298,6 @@ mutable struct Reconstruction{T<:AbstractFloat}
         fg_wf = getfield(Main, Symbol("fg_$(wavefront_parameter)_$(minimization_scheme)"))
         gradient_wf = getfield(Main, Symbol("gradient_$(wavefront_parameter)_$(minimization_scheme)_$(noise_model)noise!"))
         
-        if verb == true
-            print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Reconstruction\n"); print(Crayon(reset=true))
-            println("\tImage build size: $(build_dim)×$(build_dim) pixels")
-            println("\tWavelength: $(minimum(λ))—$(maximum(λ)) nm")
-            println("\tNumber of wavelength: $(nλ)")
-            println("\tNumber of integrated wavelengths: $(nλint)")
-            println("\tNumber of data channels: $(ndatasets)")
-            println("\tWavefront Parameter: $(symbol2str[wavefront_parameter])")
-            println("\tNoise weighting: $(weight_function)")
-            println("\tObject gradient function: $(gradient_object)")
-            println("\tWavefront gradient function: $(gradient_wf)")
-            println("\tNumber of MFBD cycles: $(niter_mfbd)")
-            println("\tMax iterations: $(maxiter)") 
-            println("\tMax evaluations: $(maxeval["wf"]) (wf), $(maxeval["object"]) (object)")
-            println("\tSmoothing: $(smoothing) (schedule: $(fwhm_schedule), Max FWHM: $(maxFWHM), Min FWHM: $(minFWHM))")
-            println("\tStopping criteria: $(grtol) (grtol), $(frtol) (frtol), $(xrtol) (xrtol)")
-        end
-
         if helpers == []
             helpers = Helpers(
                 atmosphere, 
@@ -313,13 +324,7 @@ mutable struct Reconstruction{T<:AbstractFloat}
             regularizers = Regularizers(verb=verb, FTYPE=FTYPE)
         end
 
-        patches.A = Vector{Array{FTYPE, 6}}(undef, ndatasets)
-        patches.phase_slices = zeros(FTYPE, build_dim, build_dim, patches.npatches, observations[1].nepochs, atmosphere.nlayers, nλtotal)
-        patches.phase_composite = zeros(FTYPE, build_dim, build_dim, patches.npatches, observations[1].nepochs, nλtotal)
-        patches.psfs = Vector{Array{FTYPE, 6}}(undef, ndatasets)
         for dd=1:ndatasets
-            patches.A[dd] = ones(FTYPE, build_dim, build_dim, patches.npatches, observations[dd].nsubaps, observations[dd].nepochs, nλtotal)
-            patches.psfs[dd] = zeros(FTYPE, build_dim, build_dim, patches.npatches, observations[dd].nsubaps, observations[dd].nepochs, nλ)
             observations[dd].model_images = zeros(FTYPE, observations[dd].dim, observations[dd].dim, observations[dd].nsubaps, observations[dd].nepochs)
             observations[dd].w = findall((observations[dd].optics.response .* observations[dd].detector.qe) .> 0)
         end
@@ -348,13 +353,15 @@ mutable struct Reconstruction{T<:AbstractFloat}
                 display(GLMakie.Screen(), figs.object_fig)
                 display(GLMakie.Screen(), figs.wf_fig)
             end
+            reconstruction = new{FTYPE}(λ, λtotal, nλ, nλint, nλtotal, Δλ, Δλtotal, ndatasets, build_dim, wavefront_parameter, minimization_scheme, noise_model, weight_function, fg_object, gradient_object, fg_wf, gradient_wf, niter_mfbd, indx_boot, niter_boot, maxiter, ϵ, grtol, frtol, xrtol, maxeval, regularizers, smoothing, minFWHM, maxFWHM, fwhm_schedule, helpers, patch_helpers, verb_levels, plot, figs)
+        else
+            reconstruction = new{FTYPE}(λ, λtotal, nλ, nλint, nλtotal, Δλ, Δλtotal, ndatasets, build_dim, wavefront_parameter, minimization_scheme, noise_model, weight_function, fg_object, gradient_object, fg_wf, gradient_wf, niter_mfbd, indx_boot, niter_boot, maxiter, ϵ, grtol, frtol, xrtol, maxeval, regularizers, smoothing, minFWHM, maxFWHM, fwhm_schedule, helpers, patch_helpers, verb_levels, plot)
         end
 
         if verb == true
-            println("")
+            display(reconstruction)
         end
-
-        return new{FTYPE}(λ, λtotal, nλ, nλint, nλtotal, Δλ, Δλtotal, ndatasets, build_dim, wavefront_parameter, minimization_scheme, noise_model, weight_function, fg_object, gradient_object, fg_wf, gradient_wf, niter_mfbd, indx_boot, niter_boot, maxiter, ϵ, grtol, frtol, xrtol, maxeval, regularizers, smoothing, fwhm_schedule, helpers, patch_helpers, verb_levels, plot, figs)
+        return reconstruction
     end
 end
 
@@ -546,10 +553,13 @@ end
 end
 
 @views function preconvolve_smoothing(reconstruction)
+    FTYPE = gettype(reconstruction)
     helpers = reconstruction.helpers
+    conv_prealloc = setup_conv_c2c(reconstruction.build_dim, FTYPE=FTYPE)
+    corr_prealloc = setup_corr(reconstruction.build_dim, FTYPE=FTYPE)
     for tid=1:Threads.nthreads()
-        helpers.k_conv[tid] = plan_conv_psf_buffer(helpers.smoothing_kernel, helpers.smoothing_kernel)[2]
-        helpers.k_corr[tid] = plan_ccorr_psf_buffer(helpers.smoothing_kernel, helpers.smoothing_kernel)[2]
+        helpers.k_conv[tid] = (out, in) -> conv_prealloc(out, in, helpers.smoothing_kernel)
+        helpers.k_corr[tid] = (out, in) -> corr_prealloc(out, in, helpers.smoothing_kernel)
     end
 end
 

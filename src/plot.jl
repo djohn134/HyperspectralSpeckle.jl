@@ -3,7 +3,7 @@ try
     using GLMakie
     GLMakie.activate!()
 catch
-    nothing
+    using CairoMakie
 end
 
 const PLOT_OPTIONS = (

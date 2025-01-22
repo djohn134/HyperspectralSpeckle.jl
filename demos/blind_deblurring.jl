@@ -11,7 +11,7 @@ FTYPE = Float32;
 folder = "data/test"
 id = "_iso"
 verb = true
-plot = true
+plot = false
 ###########################################
 
 ##### Size, Timestep, and Wavelengths #####
@@ -20,9 +20,8 @@ wfs_dim = 64
 nsubaps_side = 6
 nλ = 1
 nλint = 1
-λ_nyquist = 500.0
 λ_ref = 500.0
-λmin = 500.0
+λmin = λ_nyquist = 500.0
 λmax = 500.0
 λ = (nλ == 1) ? [mean([λmax, λmin])] : collect(range(λmin, stop=λmax, length=nλ))
 Δλ = (nλ == 1) ? 1.0 : (λmax - λmin) / (nλ - 1)
@@ -35,7 +34,7 @@ isoplanatic = true
 patch_overlap = 0.5
 patch_dim = 64
 ###### Create Anisoplanatic Patches #######
-patches = AnisoplanaticPatches(patch_dim, image_dim, patch_overlap, isoplanatic=isoplanatic, FTYPE=FTYPE)
+patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FTYPE=FTYPE)
 ###########################################
 
 ### Detector & Observations Parameters ####
@@ -49,9 +48,9 @@ rn = 2.0
 exptime = 5e-3
 ζ = 0.0
 ########## Create Optical System ##########
-filterV = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
+filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
 beamsplitter = OpticalElement(λ=[0.0, 10000.0], response=[0.5, 0.5], FTYPE=FTYPE)
-optics_full = OpticalSystem([filterV, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
+optics_full = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 ######### Create Full-Ap Detector #########
 detector_full = Detector(
     qe=qe,
@@ -67,19 +66,21 @@ detector_full = Detector(
 # ϕ_static_full = repeat(masks_full.masks[:, :, 1, 1] .* create_zernike_screen(image_dim, image_dim÷4, 4, 4.0, FTYPE=FTYPE), 1, 1, nλ)
 # writefits(ϕ_static_full, "$(folder)/defocus4.fits")
 # ϕ_static_full = readfits("$(folder)/defocus4.fits")
+datafile = "$(folder)/Dr0_20_ISH1x1_images.fits"
+images_full, ~, ~, image_dim = readimages(datafile, FTYPE=FTYPE)
 ϕ_static_full = zeros(FTYPE, image_dim, image_dim, nλ)
 observations_full = Observations(
+    images_full,
     optics_full,
     detector_full,
     ζ=ζ,
     D=D,
     ϕ_static=ϕ_static_full,
-    datafile="$(folder)/Dr0_20_ISH1x1_images.fits",
     verb=verb,
     FTYPE=FTYPE
 )
 # observations = [observations_full]
-optics_wfs = OpticalSystem([filterV, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
+optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 detector_wfs = Detector(
     qe=qe,
     rn=rn,
@@ -91,15 +92,17 @@ detector_wfs = Detector(
     FTYPE=FTYPE
 )
 ### Create Full-Ap Observations object ####
+datafile = "$(folder)/Dr0_20_ISH$(nsubaps_side)x$(nsubaps_side)_images.fits"
+images_wfs, nsubaps, ~, wfs_dim = readimages(datafile, FTYPE=FTYPE)
 ϕ_static_wfs = zeros(FTYPE, image_dim, image_dim, nλ)
 observations_wfs = Observations(
+    images_wfs,
     optics_wfs,
     detector_wfs,
     ζ=ζ,
     D=D,
     nsubaps_side=nsubaps_side,
     ϕ_static=ϕ_static_wfs,
-    datafile="$(folder)/Dr0_20_ISH$(nsubaps_side)x$(nsubaps_side)_images.fits",
     verb=verb,
     FTYPE=FTYPE
 )
@@ -107,19 +110,20 @@ observations = [observations_wfs, observations_full]
 background_flux = mean(fit_background.(observations))
 ###########################################
 
-########### Load Full-Ap Masks ############
+########## Create Full-Ap Masks ###########
 masks_full = Masks(
-    dim=image_dim,
-    nsubaps_side=1, 
-    λ=λ, 
+    image_dim,
+    λ,
+    nsubaps_side=1,  
     λ_nyquist=λ_nyquist, 
+    verb=verb,
     FTYPE=FTYPE
 )
 # masks = [masks_full]
 masks_wfs = Masks(
-    dim=image_dim,
-    nsubaps_side=nsubaps_side, 
-    λ=λ, 
+    image_dim,
+    λ,
+    nsubaps_side=nsubaps_side,
     λ_nyquist=λ_nyquist, 
     FTYPE=FTYPE
 )
@@ -131,7 +135,15 @@ masks = [masks_wfs, masks_full]
 ############ Object Parameters ############
 object_height = 515.0  # km
 ############## Create object ##############
+all_subap_images = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background_flux/observations_full.dim^2, 0)
+object_arr = repeat(all_subap_images, 1, 1, nλ)
+object_arr ./= sum(object_arr)
+object_arr .*= mean(sum(observations_full.images, dims=(1, 2, 3))) - background_flux
+# object.object = readfits("$(folder)/object_recon.fits")
+# object.object = readfits("$(folder)/object_truth.fits")
+# object.object = zeros(FTYPE, image_dim, image_dim, nλ)
 object = Object(
+    object_arr,
     λ=λ,
     height=object_height, 
     fov=fov,
@@ -139,14 +151,6 @@ object = Object(
     background_flux=background_flux,
     FTYPE=FTYPE
 )
-
-all_subap_images = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background_flux/observations_full.dim^2, 0)
-object.object = repeat(all_subap_images, 1, 1, nλ)
-object.object ./= sum(object.object)
-object.object .*= mean(sum(observations_full.images, dims=(1, 2, 3))) - background_flux
-# object.object = readfits("$(folder)/object_recon.fits")
-# object.object = readfits("$(folder)/object_truth.fits")
-# object.object = zeros(FTYPE, image_dim, image_dim, nλ)
 ###########################################
 
 
@@ -164,24 +168,22 @@ sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heig
 transmission = ones(FTYPE, nλ)
 ############ Create Atmosphere ############
 atmosphere = Atmosphere(
+    λ,
+    observations_full, 
+    masks_full,
+    object, 
+    patches,
     wind=wind, 
-    heights=heights, 
+    heights=heights,
     sampling_nyquist_mperpix=sampling_nyquist_mperpix,
     sampling_nyquist_arcsecperpix=sampling_nyquist_arcsecperpix,
-    λ=λ,
     λ_nyquist=λ_nyquist,
     λ_ref=λ_ref,
+    create_screens=false,
     FTYPE=FTYPE
 )
-########## Create phase screens ###########
-calculate_screen_size!(atmosphere, observations_full, object, patches)
-calculate_pupil_positions!(atmosphere, observations_full)
-calculate_layer_masks_eff!(patches, atmosphere, observations_full, object, masks_full)
-# atmosphere.opd = zeros(FTYPE, size(atmosphere.masks)[1:3])
+######### Set phase screens start #########
 atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
-# atmosphere.opd = readfits("$(folder)/opd_recon_iso.fits")
-# atmosphere.phase = readfits("$(folder)/phase_recon.fits")
-# atmosphere.phase = readfits("$(folder)/Dr0_20_phase_full.fits", FTYPE=FTYPE)
 ###########################################
 
 ######### Reconstruction Object ###########

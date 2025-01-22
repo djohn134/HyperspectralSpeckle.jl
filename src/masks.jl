@@ -1,8 +1,16 @@
 using FITSIO
 using Crayons
 
+abstract type AbstractMasks end
+function display(masks::T) where {T<:AbstractMasks}
+    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Masks\n"); print(Crayon(reset=true))
+    println("\tSize: $(masks.dim)×$(masks.dim) pixels")
+    println("\tConfiguration: $(masks.nsubaps_side)×$(masks.nsubaps_side) subapertures")
+    println("\tWavelength: $(minimum(masks.λ))—$(maximum(masks.λ)) nm")
+    println("\tNumber of wavelengths: $(length(masks.λ)) wavelengths")
+end
 
-mutable struct Masks{T<:AbstractFloat}
+mutable struct Masks{T<:AbstractFloat} <: AbstractMasks
     masks::Array{T, 4}
     dim::Int64
     λ::Vector{T}
@@ -13,27 +21,24 @@ mutable struct Masks{T<:AbstractFloat}
     nsubaps_side::Int64
     scale_psfs::Vector{T}
     ix::Vector{Int64}
-    function Masks(;
-            maskfile="",
-            dim=256,
+    function Masks(
+            dim, 
+            λ;
             nsubaps_side=1,
-            λ=[400.0],
-            λ_nyquist=400.0,
+            λ_nyquist=minimum(λ),
+            verb=true,
             FTYPE=Float64
         )
-        if (maskfile != "")
-            masks, λ = readmasks(maskfile, FTYPE=FTYPE)
-            dim = size(masks, 1)
-        else
-            masks, ix = make_ish_masks(dim, nsubaps_side, λ, λ_nyquist=λ_nyquist, FTYPE=FTYPE)
-        end
-
+        masks_arr, ix = make_ish_masks(dim, nsubaps_side, λ, λ_nyquist=λ_nyquist, verb=false, FTYPE=FTYPE)
         nλ = length(λ)
         Δλ = (nλ == 1) ? 1.0 : (maximum(λ) - minimum(λ)) / (nλ - 1)
-
-        nsubaps = size(masks, 3)
-        scale_psfs = [FTYPE(1 / norm(masks[:, :, 1, w], 2)) for w=1:nλ]
-        new{FTYPE}(masks, dim, λ, λ_nyquist, nλ, Δλ, nsubaps, nsubaps_side, scale_psfs, ix)
+        nsubaps = size(masks_arr, 3)
+        scale_psfs = [FTYPE(1 / norm(masks_arr[:, :, 1, w], 2)) for w=1:nλ]
+        masks = new{FTYPE}(masks_arr, dim, λ, λ_nyquist, nλ, Δλ, nsubaps, nsubaps_side, scale_psfs, ix)
+        if verb == true
+            display(masks)
+        end
+        return masks
     end
 end
 
@@ -46,7 +51,7 @@ end
     return mask
 end
 
-@views function make_ish_masks(dim, nsubaps_side, λ::T; λ_nyquist=400.0, verb=true, FTYPE=Float64) where {T<:AbstractFloat}
+@views function make_ish_masks(dim, nsubaps_side, λ::T; λ_nyquist=minimum(λ), verb=true, FTYPE=Float64) where {T<:AbstractFloat}
     if verb == true
         print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Mask\n"); print(Crayon(reset=true))
         println("\tSize: $(dim)×$(dim) pixels")
@@ -72,24 +77,22 @@ end
 
     kernel = LinearSpline(FTYPE)
     transform = AffineTransform2D{FTYPE}()
-
     image_size = (Int64(dim), Int64(dim))
+    mask_transform = ((transform+((dim÷2, dim÷2)))*(1/scaleby_wavelength)) - (dim÷2, dim÷2)
+    scale_mask = TwoDimensionalTransformInterpolator(image_size, image_size, kernel, mask_transform)
     for n=1:nsubaps_side^2
         fill!(temp_mask, zero(FTYPE))
         xrange = subaperture_coords[n, 1][1]:subaperture_coords[n, 1][2]
         yrange = subaperture_coords[n, 2][1]:subaperture_coords[n, 2][2]        
         temp_mask[xrange, yrange] .= 1
         temp_mask .*= nyquist_mask
-
-        mask_transform = ((transform+((dim÷2, dim÷2)))*(1/scaleby_wavelength)) - (dim÷2, dim÷2)
-        scale_mask = TwoDimensionalTransformInterpolator(image_size, image_size, kernel, mask_transform)
         subaperture_masks[:, :, n] = scale_mask*temp_mask
     end
     
     return subaperture_masks
 end
 
-@views function make_ish_masks(dim, nsubaps_side, λ::Vector{<:AbstractFloat}; λ_nyquist=400.0, verb=true, FTYPE=Float64)
+@views function make_ish_masks(dim, nsubaps_side, λ::Vector{<:AbstractFloat}; λ_nyquist=minimum(λ), verb=true, FTYPE=Float64)
     if verb == true
         print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Masks\n"); print(Crayon(reset=true))
         println("\tSize: $(dim)×$(dim) pixels")
