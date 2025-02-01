@@ -1,5 +1,5 @@
 abstract type AbstractPatches end
-function display(patches::T) where {T<:AbstractPatches}
+function Base.display(patches::T) where {T<:AbstractPatches}
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Anisoplanatic Patches\n"); print(Crayon(reset=true))
     println("\tSize: $(patches.dim) pixels")
     println("\tOverlap: $(patches.overlap)")

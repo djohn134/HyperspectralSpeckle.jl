@@ -61,13 +61,13 @@ export update_object_figure, update_layer_figure, update_opd_figure, update_phas
 include("reconstruct.jl")
 export Reconstruction, Helpers, PatchHelpers
 export gaussian_weighting, mixed_weighting, reconstruct!, height_solve!
-export ConstantSchedule, LinearSchedule, ReciprocalSchedule
+export ConstantSchedule, LinearSchedule, ReciprocalSchedule, ExponentialSchedule
 
 ## utils
 include("utils.jl")
 export gettype, writefits, writefile, writeobject, readobject, readfile, readqe, readimages, readmasks, readfits, readspectrum, readtransmission, vega_spectrum, solar_spectrum
 export gaussian_kernel, calculate_entropy, calculate_ssim, shift_and_add, fit_plane, crop, smooth_to_rmse!, bartlett_hann2d, super_gaussian, block_reduce!, block_reduce, block_replicate!, block_replicate, stack2mosaic, create_zernike_screen, smooth_to_resolution, interpolate1d, center_of_gravity
-export ft, ift, conv, conv_psf, setup_fft, setup_rfft, setup_ifft, setup_irfft, setup_conv, setup_corr, setup_autocorr, setup_operator_mul
+export setup_fft, setup_ifft, setup_conv, preconvolve, setup_corr, precorrelate, setup_autocorr, setup_operator_mul
 
 ## TOP SECRET!
 include("logos.jl")

@@ -56,7 +56,7 @@ function create_refraction_adjoint(λ, λ_ref, ζ, pixscale, build_dim; FTYPE=Fl
     return refraction
 end
 
-function pupil2psf(mask, λ, λ_ref, ζ, A, ϕ, build_dim, response, transmision, scale_psf, pixscale; FTYPE=Float64)
+function pupil2psf(mask, λ, λ_ref, ζ, A, ϕ, build_dim, response, transmission, scale_psf, pixscale; FTYPE=Float64)
     P = zeros(FTYPE, build_dim, build_dim)
     p = zeros(Complex{FTYPE}, build_dim, build_dim)
     psf = zeros(FTYPE, build_dim, build_dim)
@@ -179,7 +179,6 @@ function add_background!(image, background_flux; FTYPE=Float64)
     image .+= background_flux / dim^2
 end
 
-
 @views function calculate_composite_pupil!(A, ϕ_composite, ϕ_slices, ϕ_full, nlayers, extractors, mask, sampling_nyquist_mperpix, heights; propagate=true)
     calculate_composite_phase!(ϕ_composite, ϕ_slices, ϕ_full, nlayers, extractors)
     # if propagate == true
@@ -220,8 +219,8 @@ end
     A = ones(FTYPE, build_dim, build_dim, nthreads)
     ϕ_slices = zeros(FTYPE, build_dim, build_dim, nthreads)
     ϕ_composite = zeros(FTYPE, build_dim, build_dim, nthreads)
-    iffts = [setup_ifft(build_dim, FTYPE=FTYPE) for tid=1:Threads.nthreads()]
-    convs = [setup_conv_r2r(build_dim, FTYPE=FTYPE) for tid=1:Threads.nthreads()]
+    iffts = [setup_ifft(Complex{FTYPE}, build_dim)[1] for tid=1:Threads.nthreads()]
+    convs = [setup_conv(FTYPE, build_dim) for tid=1:Threads.nthreads()]
 
     scaleby_height = layer_scale_factors(atmosphere.heights, object.height)
     scaleby_wavelength = atmosphere.λ_nyquist ./ atmosphere.λ
@@ -255,7 +254,7 @@ end
     end
 end
 
-@views function create_image!(image, image_small_temp, image_big_temp, psf, psf_temp, scale_psfs, object, patch_weight, object_patch, masks, A, P, p, refraction, iffts, convs, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smoothing!, nlayers, extractors, sampling_nyquist_mperpix, heights, npatches, nλ, nλint, Δλ)
+@views function create_image!(image, image_small_temp, image_big_temp, psf::AbstractMatrix{<:AbstractFloat}, psf_temp, scale_psfs, object, patch_weight, object_patch, masks, A, P::AbstractMatrix{<:Complex{<:AbstractFloat}}, p::AbstractMatrix{<:Complex{<:AbstractFloat}}, refraction, iffts, convs, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smoothing!, nlayers, extractors, sampling_nyquist_mperpix, heights, npatches, nλ, nλint, Δλ)
     for np=1:npatches
         psf .*= 0
         for w₁=1:nλ
@@ -268,13 +267,25 @@ end
     image .*= Δλ
 end
 
+@views function create_image!(image, image_small_temp, image_big_temp, psfs::AbstractArray{<:AbstractFloat, 4}, psf_temp, scale_psfs, object, patch_weight, object_patch, masks, A, P::AbstractArray{<:Complex{<:AbstractFloat}, 4}, p::AbstractArray{<:Complex{<:AbstractFloat}, 4}, refraction, iffts, convs, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smoothing!, nlayers, extractors, sampling_nyquist_mperpix, heights, npatches, nλ, nλint, Δλ)
+    for np=1:npatches
+        for w₁=1:nλ
+            for w₂=1:nλint 
+                w = (w₁-1)*nλint + w₂
+                create_patch_spectral_image!(image, image_small_temp, image_big_temp, psfs[:, :, np, w], psf_temp, scale_psfs[w], object[:, :, w], patch_weight[:, :, np], object_patch, masks[:, :, w], A, P[:, :, np, w], p[:, :, np, w], refraction[w], iffts, convs, atmosphere_transmission[w], optics_response[w], ϕ_composite, phase_static[:, :, w], ϕ_slices, ϕ_full[:, :, :, w], smoothing!, nlayers, extractors[np, :, w], sampling_nyquist_mperpix, heights, nλint)
+            end
+        end
+    end
+    image .*= Δλ
+end
+
 @views function create_patch_spectral_image!(image, image_small_temp, image_big_temp, psf, psf_temp, scale_psfs, object, patch_weight, object_patch, masks, A, P, p, refraction, iffts, convs, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smoothing!, nlayers, extractors, sampling_nyquist_mperpix, heights, nλint)
     calculate_composite_pupil!(A, ϕ_composite, ϕ_slices, ϕ_full, nlayers, extractors, masks, sampling_nyquist_mperpix, heights)
     ϕ_composite .+= phase_static
-    ϕ_composite .*= masks
+    # ϕ_composite .*= masks
     smoothing!(ϕ_composite, ϕ_composite)
     pupil2psf!(psf_temp, psf_temp, masks, P, p, A, ϕ_composite, optics_response, atmosphere_transmission, scale_psfs, iffts, refraction)
-    psf .+= psf_temp ./ nλint
+    psf .= psf_temp ./ nλint
     object_patch .= patch_weight .* object
     create_monochromatic_image!(image_small_temp, image_big_temp, object_patch, psf, convs)
     image .+= image_small_temp

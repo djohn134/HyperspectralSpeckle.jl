@@ -60,13 +60,14 @@ pixscale_full = fov / image_dim
 pixscale_wfs = pixscale_full .* nsubaps_side
 qefile = "data/qe/prime-95b_qe.dat"
 ~, qe = readqe(qefile, λ=λ)
+qe ./= qe
 rn = 2.0
 exptime = 5e-3
-noise = true
+noise = false
 ζ = 0.0
 ########## Create Optical System ##########
-filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
-# filter = OpticalElement(λ=[0.0, 10000.0], response=[1.0, 1.0], FTYPE=FTYPE)
+# filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
+filter = OpticalElement(λ=[0.0, 10000.0], response=[1.0, 1.0], FTYPE=FTYPE)
 beamsplitter = OpticalElement(λ=[0.0, 10000.0], response=[0.5, 0.5], FTYPE=FTYPE)
 optics_full = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 # optics_full = OpticalSystem([filterV], λ, verb=verb, FTYPE=FTYPE)
@@ -133,7 +134,7 @@ objectfile = "data/OCNR2.fits"
 object_arr = repeat(block_reduce(readfits(objectfile, FTYPE=FTYPE), image_dim), 1, 1, nλ)
 ~, spectrum = solar_spectrum(λ=λ)
 mag = 4.0
-background_mag = 21.0
+background_mag = Inf
 flux = mag2flux(λ, spectrum, mag, filter, D=D, ζ=ζ, exptime=exptime)
 background_flux = mag2flux(λ, ones(nλ), background_mag, filter, D=D, ζ=ζ, exptime=exptime)
 background_flux *= fov^2
@@ -155,7 +156,7 @@ writefits(object.object, "$(folder)/object_truth$(id).fits", header=header)
 ###########################################
 
 ########## Anisopatch Parameters ##########
-isoplanatic = false
+isoplanatic = true
 patch_dim = 64
 ###### Create Anisoplanatic Patches #######
 patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FTYPE=FTYPE)
@@ -168,14 +169,16 @@ Dr0_ref_vertical = 20.0
 Dr0_ref_composite = Dr0_ref_vertical * sec(ζ*pi/180)
 r0_ref_composite = D / Dr0_ref_composite
 heights = [0.0, 7.0, 12.5]
+# heights = [0.0]
 wind_speed = wind_profile_roberts2011(heights, ζ)
 wind_direction = [45.0, 125.0, 135.0]
+# wind_direction = [45.0]
 wind = [wind_speed wind_direction]
 nlayers = length(heights)
 propagate = false
 r0_ref = composite_r0_to_layers(r0_ref_composite, heights, λ_ref, ζ)
-# seeds = [713, 1212, 525118]
-seeds = rand(1:1000, 3)
+seeds = [713, 1212, 525118]
+# seeds = [713]
 Dmeta = D .+ (fov/206265) .* (heights .* 1000)
 sampling_nyquist_mperpix = layer_nyquist_sampling_mperpix(D, image_dim, nlayers)
 sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heights, image_dim)
@@ -206,7 +209,7 @@ atmosphere = Atmosphere(
 # opd_smooth = calculate_smoothed_opd(atmosphere, observations_full)
 
 writefits(atmosphere.masks, "$(folder)/layer_masks.fits", header=header)
-# writefits(atmosphere.phase, "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_phase_full$(id).fits", header=header)
+writefits(atmosphere.phase, "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_phase_full$(id).fits", header=header)
 # writefits(opd_smooth, "$(folder)/Dr0_$(round(Int64, Dr0_composite))_opd_full_smooth$(id).fits")
 ###########################################
 

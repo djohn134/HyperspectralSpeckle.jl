@@ -1,17 +1,15 @@
 include("../src/HyperspectralSpeckle.jl");
 using Main.HyperspectralSpeckle;
 using Statistics;
-# using LuckyImaging;
-# show_the_sausage()
 
 
 ############# Data Parameters #############
 FTYPE = Float32;
 # folder = "/home/dan/Desktop/JASS_2024/tests";
 folder = "data/test"
-id = "_iso"
+id = ""
 verb = true
-plot = false
+plot = true
 ###########################################
 
 ##### Size, Timestep, and Wavelengths #####
@@ -44,11 +42,13 @@ pixscale_full = fov / image_dim
 pixscale_wfs = pixscale_full .* nsubaps_side
 qefile = "data/qe/prime-95b_qe.dat"
 ~, qe = readqe(qefile, λ=λ)
-rn = 2.0
+qe ./= qe
+rn = 1.0
 exptime = 5e-3
 ζ = 0.0
 ########## Create Optical System ##########
-filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
+# filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
+filter = OpticalElement(λ=[0.0, 10000.0], response=[1.0, 1.0], FTYPE=FTYPE)
 beamsplitter = OpticalElement(λ=[0.0, 10000.0], response=[0.5, 0.5], FTYPE=FTYPE)
 optics_full = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 ######### Create Full-Ap Detector #########
@@ -107,7 +107,7 @@ observations_wfs = Observations(
     FTYPE=FTYPE
 )
 observations = [observations_wfs, observations_full]
-background_flux = mean(fit_background.(observations))
+background_flux = 0*mean(fit_background.(observations))
 ###########################################
 
 ########## Create Full-Ap Masks ###########
@@ -140,8 +140,8 @@ object_arr = repeat(all_subap_images, 1, 1, nλ)
 object_arr ./= sum(object_arr)
 object_arr .*= mean(sum(observations_full.images, dims=(1, 2, 3))) - background_flux
 # object.object = readfits("$(folder)/object_recon.fits")
-# object.object = readfits("$(folder)/object_truth.fits")
-# object.object = zeros(FTYPE, image_dim, image_dim, nλ)
+# object_arr = readfits("$(folder)/object_truth.fits")
+# object_arr = zeros(FTYPE, image_dim, image_dim, nλ)
 object = Object(
     object_arr,
     λ=λ,
@@ -149,6 +149,8 @@ object = Object(
     fov=fov,
     dim=observations_full.dim,
     background_flux=background_flux,
+    spectrum=ones(nλ),
+    scaled=true,
     FTYPE=FTYPE
 )
 ###########################################
@@ -156,9 +158,11 @@ object = Object(
 
 ########## Atmosphere Parameters ##########
 heights = [0.0, 7.0, 12.5]
+# heights = [0.0]
 wind_speed = wind_profile_roberts2011(heights, ζ)
 # heights .*= 0.0
 wind_direction = [45.0, 125.0, 135.0]
+# wind_direction = [45.0]
 wind = [wind_speed wind_direction]
 nlayers = length(heights)
 scaleby_wavelength = λ_nyquist ./ λ
@@ -184,6 +188,7 @@ atmosphere = Atmosphere(
 )
 ######### Set phase screens start #########
 atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
+# atmosphere.phase = readfits("$(folder)/Dr0_20_phase_full.fits")
 ###########################################
 
 ######### Reconstruction Object ###########
@@ -202,9 +207,9 @@ reconstruction = Reconstruction(
     wavefront_parameter=:phase,
     minimization_scheme=:mle,
     noise_model=:gaussian,
-    maxeval=Dict("wf"=>1000, "object"=>1000),
+    maxeval=Dict("wf"=>10000, "object"=>10000),
     smoothing=true,
-    # fwhm_schedule=ConstantSchedule(0.5),
+    # fwhm_schedule=ConstantSchedule(10.0),
     grtol=1e-9,
     frtol=1e-9,
     xrtol=1e-9,

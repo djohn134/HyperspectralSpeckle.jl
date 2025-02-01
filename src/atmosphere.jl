@@ -8,7 +8,7 @@ import Interpolations: interpolate, Gridded, Linear
 
 abstract type AbstractAtmosphere end
 
-function display(atmosphere::T) where {T<:AbstractAtmosphere}
+function Base.display(atmosphere::T) where {T<:AbstractAtmosphere}
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Atmosphere\n"); print(Crayon(reset=true))
     println("\tNumber of layers: $(atmosphere.nlayers) layers")
     println("\tWind speed: $(atmosphere.wind[:, 1]) m/s")

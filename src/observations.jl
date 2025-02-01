@@ -26,7 +26,7 @@ const ELEMENT_FILENAMES = Dict(
 abstract type AbstractDetector end
 abstract type AbstractOpticalSystem end
 abstract type AbstractObservations end
-function display(detector::T) where {T<:AbstractDetector}
+function Base.display(detector::T) where {T<:AbstractDetector}
     ~, DTYPE = gettypes(detector)
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Detector\n"); print(Crayon(reset=true))
     println("\tBit Depth: $(DTYPE)")
@@ -39,13 +39,13 @@ function display(detector::T) where {T<:AbstractDetector}
     println("\tNyquist sampled wavelength: $(detector.λ_nyquist) nm")
 end
 
-function display(optical_system::T) where {T<:AbstractOpticalSystem}
+function Base.display(optical_system::T) where {T<:AbstractOpticalSystem}
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Optical system\n"); print(Crayon(reset=true))
     println("\tNumber of elements: $(length(optical_system.elements))")
     println("\tWavelength: $(minimum(optical_system.λ))—$(maximum(optical_system.λ)) nm")
 end
 
-function display(observations::T) where {T<:AbstractObservations}
+function Base.display(observations::T) where {T<:AbstractObservations}
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Observations\n"); print(Crayon(reset=true))
     println("\tImage Size: $(observations.dim)x$(observations.dim) pixels")
     println("\tNumber of frames: $(observations.nepochs)")

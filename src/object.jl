@@ -5,7 +5,7 @@ using Interpolations: interpolate, Gridded, Linear
 
 
 abstract type AbstractObject end
-function display(object::T) where {T<:AbstractObject}
+function Base.display(object::T) where {T<:AbstractObject}
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Object\n"); print(Crayon(reset=true))
     println("\tSize: $(object.dim)×$(object.dim) pixels")
     println("\tFOV: $(object.fov)×$(object.fov) arcsec")
@@ -36,17 +36,20 @@ mutable struct Object{T<:AbstractFloat} <: AbstractObject
             fov=0,
             height=0,
             spectrum=[0],
+            scaled=false,
             FTYPE=Float64,
             verb=true
         )
         nλ = length(λ)
         Δλ = (nλ == 1) ? 1.0 : (maximum(λ) - minimum(λ)) / (nλ - 1)
         sampling_arcsecperpix = fov / dim
-        for w=1:nλ
-            object_arr[:, :, w] .*= spectrum[w]
+        if scaled == false
+            for w=1:nλ
+                object_arr[:, :, w] .*= spectrum[w]
+            end
+            object_arr ./= sum(object_arr)
+            object_arr .*= flux / Δλ
         end
-        object_arr ./= sum(object_arr)
-        object_arr .*= flux / Δλ
         object = new{FTYPE}(dim, λ, nλ, height, fov, sampling_arcsecperpix, spectrum, flux, background_flux, object_arr)
         if verb == true
             display(object)

@@ -2,7 +2,7 @@ using FITSIO
 using Crayons
 
 abstract type AbstractMasks end
-function display(masks::T) where {T<:AbstractMasks}
+function Base.display(masks::T) where {T<:AbstractMasks}
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Masks\n"); print(Crayon(reset=true))
     println("\tSize: $(masks.dim)×$(masks.dim) pixels")
     println("\tConfiguration: $(masks.nsubaps_side)×$(masks.nsubaps_side) subapertures")

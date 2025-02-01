@@ -331,224 +331,140 @@ function filter_to_rmse!(ϕ_smooth, ϕ, rms_target, mask, dim; FTYPE=Float64)
     ϕ_smooth .= fourier_filter(ϕ, dim-argmin(abs.(rms .- rms_target)))
 end
 
-function get_plan(::Type{<:Real})
-    return plan_rfft
+function select_fft_plan(::Type{T}, dim) where {T<:Real}
+    return plan_rfft(Matrix{T}(undef, dim, dim)), Matrix{Complex{T}}(undef, dim÷2+1, dim)
 end
 
-function get_plan(::Type{T}) where T
-    return plan_fft
+function select_fft_plan(::Type{T}, dim) where {T<:Complex}
+    return plan_fft(Matrix{T}(undef, dim, dim)), Matrix{T}(undef, dim, dim)
 end
 
-function setup_fft(dim; FTYPE=Float64)
-    container = Matrix{Complex{FTYPE}}(undef, dim, dim)
-    pft = plan_fft!(container)
+function setup_fft(::Type{T}, dim) where {T}
+    pft, container = select_fft_plan(T, dim)
     function fft!(out, in)
-        fftshift!(container, in)
-        mul!(container, pft, container)
-        ifftshift!(out, container)
+        # fftshift!(container, in)
+        # mul!(container, pft, container)
+        # ifftshift!(out, container)
+        mul!(out, pft, in)
     end
 
-    return fft!
+    return fft!, container
 end
 
-function setup_rfft(dim; FTYPE=Float64)
-    container1 = Matrix{FTYPE}(undef, dim, dim)
-    container2 = Matrix{Complex{FTYPE}}(undef, dim÷2+1, dim)
-    prft = plan_rfft(container1)
-    function rfft!(out, in)
-        fftshift!(container1, in)
-        mul!(container2, prft, container1)
-        circshift!(out, container2, (0, dim÷2))
-    end
-
-    return rfft!
+function select_ifft_plan(::Type{T}, dim) where {T<:Real}
+    return plan_irfft(Matrix{Complex{T}}(undef, dim÷2+1, dim), dim), Matrix{T}(undef, dim, dim)
 end
 
-function setup_ifft(dim; FTYPE=Float64)
-    scale_ifft = FTYPE(dim)
-    container = Matrix{Complex{FTYPE}}(undef, dim, dim)
-    pift = plan_ifft!(container)
+function select_ifft_plan(::Type{T}, dim) where {T<:Complex}
+    return plan_ifft(Matrix{T}(undef, dim, dim)), Matrix{T}(undef, dim, dim)
+end
+
+function setup_ifft(::Type{T}, dim) where {T}
+    scale_ifft = T(dim)
+    pift, container = select_ifft_plan(T, dim)
     function ifft!(out, in)
-        ifftshift!(container, in)
-        mul!(container, pift, container)
-        fftshift!(out, container)
+        # ifftshift!(container, in)
+        # mul!(container, pift, container)
+        # fftshift!(out, container)
+        mul!(out, pift, in)
         out .*= scale_ifft
     end
 
-    return ifft!
+    return ifft!, container
 end
 
-function setup_irfft(dim; FTYPE=Float64)
-    scale_irfft = FTYPE(dim)
-    container1 = Matrix{Complex{FTYPE}}(undef, dim÷2+1, dim)
-    container2 = Matrix{FTYPE}(undef, dim, dim)
-    pirft = plan_irfft(container1, dim)
-    function irfft!(out, in)
-        circshift!(container1, in, (0, dim÷2))
-        mul!(container2, pirft, container1)
-        fftshift!(out, container2)
-        out .*= scale_irfft
-    end
-
-    return irfft!
-end
-
-function conv(u::AbstractArray{T, N}, v::AbstractArray{D, M}, dims=ntuple(+, min(N, M))) where {T, D, N, M}
-    return ifft(fft(u, dims) .* fft(v, dims), dims)
-end
-
-function conv(u::AbstractArray{<:Real, N}, v::AbstractArray{<:Real, M}, dims=ntuple(+, min(N, M))) where {N, M}
-    return irfft(rfft(u, dims) .* rfft(v, dims), size(u, dims[1]), dims)
-end
-
-function conv_psf(u::AbstractArray{T, N}, psf::AbstractArray{D, M}, dims=ntuple(+, min(N, M))) where {T, D, N, M}
-    return conv(u, ifftshift(psf, dims), dims)
-end
-
-function plan_conv_buffer(u::AbstractArray{T1, N}, v::AbstractArray{T2, M}, dims=ntuple(+, N);
-    kwargs...) where {T1, T2, N, M}
-    plan = get_plan(T1)
-    # do the preplanning step
-    P_u = plan(u, dims; kwargs...)
-    P_v = plan(v, dims)
-
-    u_buff = P_u * u
-    v_ft = P_v * v
-    uv_buff = u_buff .* v_ft
-
-    # for fourier space we need a new plan
-    P = plan(u .* v, dims; kwargs...)
-    P_inv = inv(P)
-    out_buff = P_inv * uv_buff
-
-    # construct the efficient conv function
-    # P and P_inv can be understood like matrices
-    # but their computation is fast
-    function conv(u, v_ft=v_ft)
-    mul!(u_buff, P_u, u)
-    uv_buff .= u_buff .* v_ft
-    mul!(out_buff, P_inv, uv_buff)
-    return out_buff
-    end
-
-    return v_ft, conv
-end
-
-function plan_conv_psf_buffer(u::AbstractArray{T, N}, psf::AbstractArray{T, M}, dims=ntuple(+, N);
-    kwargs...) where {T, N, M}
-return plan_conv_buffer(u, ifftshift(psf, dims), dims; kwargs...)
-end
-
-function setup_conv_c2c(dim; FTYPE=Float64)
-    ft1 = setup_fft(dim, FTYPE=FTYPE)
-    ft2 = setup_fft(dim, FTYPE=FTYPE)
-    ift1 = setup_ifft(dim, FTYPE=FTYPE)
-    container1 = Matrix{Complex{FTYPE}}(undef, dim, dim)
-    container2 = Matrix{Complex{FTYPE}}(undef, dim, dim)
-    function conv_c2c!(out, in1, in2)
+function setup_conv(::Type{T}, dim) where {T}
+    scale_conv = T(dim)
+    ft1, container1 = setup_fft(T, dim)
+    ft2, container2 = setup_fft(T, dim)
+    ift1, ~ = setup_ifft(T, dim)
+    function conv!(out, in1, in2)
         ft1(container1, in1)
         ft2(container2, in2)
         container1 .*= container2
         ift1(out, container1)
+        out ./= scale_conv
     end
 
-    return conv_c2c!
+    return conv!
 end
 
-function setup_conv_r2r(dim; FTYPE=Float64)
-    rft1 = setup_rfft(dim, FTYPE=FTYPE)
-    rft2 = setup_rfft(dim, FTYPE=FTYPE)
-    irft1 = setup_irfft(dim, FTYPE=FTYPE)
-    container1 = Matrix{Complex{FTYPE}}(undef, dim÷2+1, dim)
-    container2 = Matrix{Complex{FTYPE}}(undef, dim÷2+1, dim)
-    function conv_r2r!(out, in1, in2)
-        rft1(container1, in1)
-        rft2(container2, in2)
+function preconvolve(in)
+    dim = size(in, 1)
+    FTYPE = eltype(in)
+    scale_conv = FTYPE(dim)
+    ft1, container1 = setup_fft(FTYPE, dim)
+    ft2, container2 = setup_fft(FTYPE, dim)
+    ift1, ~ = setup_ifft(FTYPE, dim)
+    ft2(container2, in)
+    function preconv!(out, in)
+        ft1(container1, in)
         container1 .*= container2
-        irft1(out, container1)
+        ift1(out, container1)
+        out ./= scale_conv
     end
 
-    return conv_r2r!
+    return preconv!
 end
 
-function ccorr(u::AbstractArray{<:Real, N}, v::AbstractArray{<:Real, M}, 
-    dims=ntuple(+, min(N, M));
-    centered=false) where {N, M}
-    out = irfft(rfft(u, dims) .* conj.(rfft(v, dims)), size(u, dims[1]), dims)
-
-    if centered
-        return fftshift(out)
-    else
-        return out
-    end
-end
-
-function ccorr_psf(u::AbstractArray{T, N}, psf::AbstractArray{D, M}, dims=ntuple(+, min(N, M))) where {T, D, N, M}
-    return ccorr(u, ifftshift(psf, dims), dims)
-end
-
-function plan_ccorr_buffer(u::AbstractArray{T1, N}, v::AbstractArray{T2, M}, dims=ntuple(+, N);
-    kwargs...) where {T1, T2, N, M}
-    plan = get_plan(T1)
-    # do the preplanning step
-    P_u = plan(u, dims; kwargs...)
-    P_v = plan(v, dims)
-
-    u_buff = P_u * u
-    v_ft = P_v * v
-    conj!(v_ft)
-    uv_buff = u_buff .* v_ft
-
-    # for fourier space we need a new plan
-    P = plan(u .* v, dims; kwargs...)
-    P_inv = inv(P)
-    out_buff = P_inv * uv_buff
-
-    # construct the efficient conv function
-    # P and P_inv can be understood like matrices
-    # but their computation is fast
-    function ccorr(u, v_ft=v_ft)
-        mul!(u_buff, P_u, u)
-        uv_buff .= u_buff .* v_ft
-        mul!(out_buff, P_inv, uv_buff)
-        return out_buff
-    end
-
-    return v_ft, ccorr
-end
-
-function plan_ccorr_psf_buffer(u::AbstractArray{T, N}, psf::AbstractArray{T, M}, dims=ntuple(+, N);
-    kwargs...) where {T, N, M}
-    return plan_ccorr_buffer(u, ifftshift(psf, dims), dims; kwargs...)
-end
-
-function setup_corr(dim; FTYPE=Float64)
-    scale_corr = FTYPE(dim)
-    ft1 = setup_fft(dim, FTYPE=FTYPE)
-    ft2 = setup_fft(dim, FTYPE=FTYPE)
-    ift1 = setup_ifft(dim, FTYPE=FTYPE)
-    container1 = Matrix{Complex{FTYPE}}(undef, dim, dim)
-    container2 = Matrix{Complex{FTYPE}}(undef, dim, dim)
+function setup_corr(::Type{T}, dim) where {T}
+    scale_corr = T(dim)
+    ft1, container1 = setup_fft(T, dim)
+    ft2, container2 = setup_fft(T, dim)
+    ift1, ~ = setup_ifft(T, dim)
     function corr!(out, in1, in2)
         ft1(container1, in1)
         ft2(container2, in2)
         container1 .*= conj.(container2)
         ift1(out, container1)
+        out ./= scale_corr
     end
 
     return corr!
 end
 
-function setup_autocorr(dim; FTYPE=Float64)
-    ft1 = setup_fft(dim, FTYPE=FTYPE)
-    ift1 = setup_ifft(dim, FTYPE=FTYPE)
-    container1 = Matrix{Complex{FTYPE}}(undef, dim, dim)
-    container2 = Matrix{FTYPE}(undef, dim, dim)
+function precorrelate(in)
+    dim = size(in, 1)
+    FTYPE = eltype(in)
+    scale_corr = FTYPE(dim)
+    ft1, container1 = setup_fft(FTYPE, dim)
+    ft2, container2 = setup_fft(FTYPE, dim)
+    ift1, ~ = setup_ifft(FTYPE, dim)
+    ft2(container2, in)
+    conj!(container2)
+    function precorr!(out, in)
+        ft1(container1, in)
+        container1 .*= container2
+        ift1(out, container1)
+        out ./= scale_corr
+    end
+    
+    return precorr!
+end
+
+function setup_autocorr(::Type{T}, dim) where {T<:Real}
+    container = Matrix{Complex{T}}(undef, dim, dim)
+    ft1, ~ = setup_fft(Complex{T}, dim)
+    ift1, container2 = setup_ifft(Complex{T}, dim)
     function autocorr!(out, in)
-        ift1(container1, in)
-        container2 .= abs2.(container1)
-        ft1(container1, container2)
-        out .= real.(container1)
+        container .= complex.(in)
+        ift1(container2, container)
+        container .= abs2.(container2)
+        ft1(container2, container)
+        out .= real.(container2)
+    end
+
+    return autocorr!
+end
+
+function setup_autocorr(::Type{T}, dim) where {T<:Complex}
+    ft1, container1 = setup_fft(T, dim)
+    ift1, container2 = setup_ifft(T, dim)
+    function autocorr!(out, in)
+        ift1(container2, in)
+        container1 .= abs2.(container2)
+        ft1(container2, container1)
+        out .= container2
     end
 
     return autocorr!

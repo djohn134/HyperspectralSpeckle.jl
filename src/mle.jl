@@ -12,7 +12,7 @@ function loglikelihood_gaussian(r, data, model, ω)
     return ϵ
 end
 
-@views function fg_object_mle(x::AbstractArray{<:AbstractFloat, 3}, g, observations, reconstruction, patches, object)
+@views function fg_object_mle(x::AbstractArray{<:AbstractFloat, 3}, g, observations, atmosphere, masks, patches, reconstruction, object)
     ## Optimized but unreadable
     FTYPE = gettype(reconstruction)
     ndatasets = length(observations)
@@ -25,24 +25,47 @@ end
         update_object_figure(dropdims(mean(x, dims=3), dims=3), reconstruction)
     end
     
-    for dd=1:ndatasets
-        observation = observations[dd]
-        psfs = patches.psfs[dd]
-        r = helpers.r[dd]
-        ω = helpers.ω[dd]
-        Î_small = helpers.Î_small[dd]
-        fill!(observation.model_images, zero(FTYPE))
-        Threads.@threads :static for t=1:observation.nepochs
-            tid = Threads.threadid()
-            Î_big = helpers.Î_big[:, :, tid]
-            for n=1:observation.nsubaps
-                for np=1:patches.npatches
-                    create_polychromatic_image!(observation.model_images[:, :, n, t], Î_small[:, :, tid], Î_big, patches.w[:, :, np], helpers.containers_builddim_real[:, :, tid], x, psfs[:, :, np, n, t, :], reconstruction.λ, reconstruction.Δλ)
-                end
-                observation.model_images[:, :, n, t] .+= object.background_flux ./ observation.dim^2
-                ω[:, :, tid] .= reconstruction.weight_function(observation.entropy[n, t], observation.model_images[:, :, n, t], observation.detector.rn)
-                helpers.ϵ_threads[tid] += loglikelihood_gaussian(r[:, :, tid], observation.images[:, :, n, t], observation.model_images[:, :, n, t], ω[:, :, tid])
-                reconstruction.gradient_object(helpers.g_threads_obj[:, :, :, tid], r[:, :, tid], ω[:, :, tid], Î_big, psfs[:, :, :, n, t, :], observation.entropy[n, t], patches.w, patches.npatches, reconstruction.Δλ, reconstruction.nλ)
+    for dd=1:ndatasets  # Loop through data channels
+        ## Aliases for dataset-dependent parameters
+        observation = observations[dd]  # Dataset from the full set
+        optics = observation.optics  # Makes it easier to type
+        mask = masks[dd]  # Masks for that dataset
+        scale_psfs = mask.scale_psfs  # Scaler to multiply the PSFs by to ensure unit volume
+        refraction = helpers.refraction[dd, :]  # Refraction operator for the dataset
+        r = helpers.r[dd]  # Buffer to hold residuals
+        ω = helpers.ω[dd]  # Buffer to hold statistical weights
+        ϕ_static = observation.phase_static  # Static phase for the dataset
+        ## 
+        fill!(observation.model_images, zero(FTYPE))  # Fill the model images with zeros to ensure a fresh start
+        Threads.@threads :static for t=1:observation.nepochs  # Loop through all timesteps
+            tid = Threads.threadid()  # Indexing is done by the thread id, which remains constant under the :static thread scheduler
+            ## Aliases for time-dependent parameters
+            iffts = helpers.ift[tid]  # Pre-allocated FFTs
+            convs = helpers.convolve[tid]  # Pre-allocated convolutions
+            corrs = helpers.correlate[tid]  # Pre-allocated correlations
+            extractor = helpers.extractor[dd, t, :, :, :]  # Interpolation operators for punch out
+            A = helpers.A[:, :, tid]  # Buffer for amplitude
+            ϕ_slices = helpers.ϕ_slices[:, :, tid]  # Buffer for per-layer phase
+            ϕ_composite = helpers.ϕ_composite[:, :, tid]  # Buffer for composite phase
+            smoothing = helpers.smooth[tid]  # Function to smooth the composite phase
+            P = helpers.P[:, :, :, :, tid]  # Pupil function buffers 
+            p = helpers.p[:, :, :, :, tid]  # IFFT of pupil function buffers
+            psfs = helpers.psf[:, :, :, :, tid]  # PSF buffer
+            psf_temp = helpers.psf_temp[:, :, tid]  # Temporary array needed to compute PSF
+            object_patch = helpers.object_patch[:, :, tid]  # Object-times-patch weight buffer
+            image_temp_big = helpers.image_temp_big[:, :, tid]  # Buffer to hold the full-size spectral image
+            image_temp_small = helpers.image_temp_small[dd][:, :, tid]  # Buffer to hold the downsampled spectral image
+            ##
+            for n=1:observation.nsubaps  # Loop through all subaps
+                ## Aliases for subap-dependent parameters
+                subap_image = observation.model_images[:, :, n, t]  # Model image for each subap at each time
+                subap_mask = mask.masks[:, :, n, :]  # Mask for each subap at all wavelengths
+                ##
+                create_image!(subap_image, image_temp_small, image_temp_big, psfs, psf_temp, scale_psfs, x, patches.w, object_patch, subap_mask, A, P, p, refraction, iffts, convs, atmosphere.transmission, optics.response, ϕ_composite, ϕ_static, ϕ_slices, atmosphere.phase, smoothing, atmosphere.nlayers, extractor, atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, reconstruction.nλ, reconstruction.nλint, reconstruction.Δλ)
+                observation.model_images[:, :, n, t] .+= object.background_flux ./ observation.dim^2  # Add the background, which is specified per image, so scale by the number of pixels first
+                ω[:, :, tid] .= reconstruction.weight_function(observation.entropy[n, t], observation.model_images[:, :, n, t], observation.detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
+                helpers.ϵ_threads[tid] += loglikelihood_gaussian(r[:, :, tid], observation.images[:, :, n, t], observation.model_images[:, :, n, t], ω[:, :, tid])  # Calculate the gaussian likelihood for the calculated model image and data frame
+                reconstruction.gradient_object(helpers.g_threads_obj[:, :, :, tid], r[:, :, tid], ω[:, :, tid], image_temp_big, psfs, observation.entropy[n, t], patches.w, patches.npatches, reconstruction.Δλ, reconstruction.nλ, corrs, helpers.containers_builddim_real[:, :, tid])
             end
         end
     end
@@ -61,12 +84,13 @@ end
     return ϵ
 end
 
-@views function gradient_object_mle_gaussiannoise!(g::AbstractArray{<:AbstractFloat, 3}, r, ω, image_big, psfs, entropy, patch_weights, npatches, Δλ, nλ)
+@views function gradient_object_mle_gaussiannoise!(g::AbstractArray{<:AbstractFloat, 3}, r, ω, image_big, psfs, entropy, patch_weights, npatches, Δλ, nλ, corr_prealloc!, container_builddim_real)
     r .*= ω
     block_replicate!(image_big, r)
     for np=1:npatches
         for w₁=1:nλ
-            g[:, :, w₁] .+= (2*Δλ) .* patch_weights[:, :, np] .* ccorr_psf(image_big, psfs[:, :, np, w₁])
+            corr_prealloc!(container_builddim_real, image_big, psfs[:, :, np, w₁])
+            g[:, :, w₁] .+= (2*Δλ) .* patch_weights[:, :, np] .* container_builddim_real
         end
     end
 end
@@ -146,7 +170,7 @@ end
                 observation.model_images[:, :, n, t] .+= object.background_flux ./ observation.dim^2
                 ω[:, :, tid] .= reconstruction.weight_function(observation.entropy[n, t], observation.model_images[:, :, n, t], observation.detector.rn)
                 helpers.ϵ_threads[tid] += loglikelihood_gaussian(r[:, :, tid], observation.images[:, :, n, t], observation.model_images[:, :, n, t], ω[:, :, tid])
-                reconstruction.gradient_wf(helpers.g_threads_opd[:, :, :, tid], r[:, :, tid], ω[:, :, tid], P, p, helpers.c[:, :, tid], helpers.d[:, :, tid], helpers.d2[:, :, tid], reconstruction.λtotal, reconstruction.Δλtotal, reconstruction.nλ, reconstruction.nλint, optics.response, atmosphere.transmission, atmosphere.nlayers, helpers.o_corr[:, :, tid], observation.entropy[n, t], patches.npatches, reconstruction.smoothing, helpers.k_corr[tid], refraction_adj, extractor_adj, helpers.ift[1][tid], helpers.containers_builddim_real[:, :, tid], helpers.containers_sdim_real[:, :, tid])
+                reconstruction.gradient_wf(helpers.g_threads_opd[:, :, :, tid], r[:, :, tid], ω[:, :, tid], P, p, helpers.c[:, :, tid], helpers.d[:, :, tid], helpers.d2[:, :, tid], reconstruction.λtotal, reconstruction.Δλtotal, reconstruction.nλ, reconstruction.nλint, optics.response, atmosphere.transmission, atmosphere.nlayers, helpers.o_corr[:, :, tid], observation.entropy[n, t], patches.npatches, helpers.k_corr[tid], refraction_adj, extractor_adj, helpers.ift[1][tid], helpers.containers_builddim_real[:, :, tid], helpers.containers_sdim_real[:, :, tid])
             end
         end
     end
@@ -165,7 +189,7 @@ end
     return ϵ
 end
 
-@views function gradient_opd_mle_gaussiannoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, nlayers, o_corr, entropy, npatches, smoothing, k_corr, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_sdim_real)
+@views function gradient_opd_mle_gaussiannoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, nlayers, o_corr, entropy, npatches, k_corr, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_sdim_real)
     FTYPE = eltype(r)
     r .*= ω
     block_replicate!(c, r)
@@ -196,7 +220,7 @@ end
     end
 end
 
-@views function gradient_opd_mle_mixednoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, nlayers, o_corr, entropy, npatches, smoothing, k_corr, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_sdim_real)
+@views function gradient_opd_mle_mixednoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, nlayers, o_corr, entropy, npatches, k_corr, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_sdim_real)
     FTYPE = eltype(r)
     r .= 2 .* ω .* r .- (ω .* r).^2 .* entropy
     block_replicate!(c, r)
@@ -229,64 +253,70 @@ end
 end
 
 @views function fg_phase_mle(x, g, observations, atmosphere, masks, patches, reconstruction, object)
-    ## Optimized but unreadable
-    FTYPE = gettype(reconstruction)
-    ndatasets = length(observations)
-    helpers = reconstruction.helpers
-    patch_helpers = reconstruction.patch_helpers
-    regularizers = reconstruction.regularizers
-    fill!(g, zero(FTYPE))
-    fill!(helpers.g_threads_ϕ, zero(FTYPE))
-    fill!(helpers.ϵ_threads, zero(FTYPE))
-    if reconstruction.plot == true
+    FTYPE = gettype(reconstruction)  # Alias for the datatype
+    ndatasets = length(observations)  # Number of datasets to be processed
+    helpers = reconstruction.helpers  # Alias for helpers, makes it quicker to type
+    regularizers = reconstruction.regularizers  # Alias for regularizers, makes it quicker to type
+    fill!(g, zero(FTYPE))  # Fill gradient with zeros, OptimPack initializes it with undef's, which can give crazy NaN values
+    fill!(helpers.g_threads_ϕ, zero(FTYPE))  # Fill phase gradient buffer with zeros
+    fill!(helpers.ϵ_threads, zero(FTYPE))  # Fill criterion vector with zeros
+    if reconstruction.plot == true  # If plotting is enabled, object and phase plots will be updated here with the current proposed values
         update_phase_figure(x, atmosphere, reconstruction)
     end
     
-    for dd=1:ndatasets
-        observation = observations[dd]
-        optics = observation.optics
-        mask = masks[dd]
-        scale_psfs = mask.scale_psfs
-        refraction = helpers.refraction[dd, :]
-        refraction_adj = helpers.refraction_adj[dd, :]
-        r = helpers.r[dd]
-        ω = helpers.ω[dd]
-        ϕ_static = observation.phase_static
-        fill!(observation.model_images, zero(FTYPE))
-        Threads.@threads :static for t=1:observation.nepochs
-            tid = Threads.threadid()
-            iffts = helpers.ift[1][tid]
-            convs = helpers.convolve[1][tid]
-            extractor = patch_helpers.extractor[t, :, :, :]
-            extractor_adj = patch_helpers.extractor_adj[t, :, :, :]
-            A = helpers.A[:, :, tid]
-            ϕ_slices = helpers.ϕ_slices[:, :, tid]
-            ϕ_composite = helpers.ϕ_composite[:, :, tid]
-            smoothing = helpers.k_conv[tid]
-            P = helpers.P[:, :, tid]
-            p = helpers.p[:, :, tid]
-            psf = helpers.psf[:, :, tid]
-            psf_temp = helpers.psf_temp[:, :, tid]
-            object_patch = helpers.object_patch[:, :, tid]
-            image_temp_big = helpers.image_temp_big[:, :, tid]
-            image_temp_small = helpers.image_temp_small[dd][:, :, tid]
-
-            for n=1:observation.nsubaps
-                create_image!(observation.model_images[:, :, n, t], image_temp_small, image_temp_big, psf, psf_temp, scale_psfs, object.object, patches.w, object_patch, mask.masks[:, :, n, :], A, P, p, refraction, iffts, convs, atmosphere.transmission, optics.response, ϕ_composite, ϕ_static, ϕ_slices, atmosphere.phase, smoothing, atmosphere.nlayers, extractor, atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, reconstruction.nλ, reconstruction.nλint, reconstruction.Δλ)
-                observation.model_images[:, :, n, t] .+= object.background_flux ./ observation.dim^2
-                ω[:, :, tid] .= reconstruction.weight_function(observation.entropy[n, t], observation.model_images[:, :, n, t], observation.detector.rn)
-                helpers.ϵ_threads[tid] += loglikelihood_gaussian(r[:, :, tid], observation.images[:, :, n, t], observation.model_images[:, :, n, t], ω[:, :, tid])
-                # reconstruction.gradient_wf(helpers.g_threads_ϕ[:, :, :, :, tid], r[:, :, tid], ω[:, :, tid], P, p, helpers.c[:, :, tid], helpers.d[:, :, tid], helpers.d2[:, :, tid], reconstruction.λtotal, reconstruction.Δλtotal, reconstruction.nλ, reconstruction.nλint, optics.response, atmosphere.transmission, atmosphere.nlayers, helpers.o_corr[:, :, tid], observation.entropy[n, t], patches.npatches, reconstruction.smoothing, helpers.k_corr[tid], refraction_adj, extractor_adj, helpers.ift[1][tid], helpers.containers_builddim_real[:, :, tid], helpers.containers_sdim_real[:, :, tid])
+    for dd=1:ndatasets  # Loop through data channels
+        ## Aliases for dataset-dependent parameters
+        observation = observations[dd]  # Dataset from the full set
+        optics = observation.optics  # Makes it easier to type
+        mask = masks[dd]  # Masks for that dataset
+        scale_psfs = mask.scale_psfs  # Scaler to multiply the PSFs by to ensure unit volume
+        refraction = helpers.refraction[dd, :]  # Refraction operator for the dataset
+        refraction_adj = helpers.refraction_adj[dd, :]  # Inverse refraction operator for the dataset
+        r = helpers.r[dd]  # Buffer to hold residuals
+        ω = helpers.ω[dd]  # Buffer to hold statistical weights
+        ϕ_static = observation.phase_static  # Static phase for the dataset
+        ## 
+        fill!(observation.model_images, zero(FTYPE))  # Fill the model images with zeros to ensure a fresh start
+        Threads.@threads :static for t=1:observation.nepochs  # Loop through all timesteps
+            tid = Threads.threadid()  # Indexing is done by the thread id, which remains constant under the :static thread scheduler
+            ## Aliases for time-dependent parameters
+            iffts = helpers.ift[tid]  # Pre-allocated FFTs
+            convs = helpers.convolve[tid]  # Pre-allocated convolutions
+            extractor = helpers.extractor[dd, t, :, :, :]  # Interpolation operators for punch out
+            extractor_adj = helpers.extractor_adj[dd, t, :, :, :]  # Interpolation operators for unpunch out
+            A = helpers.A[:, :, tid]  # Buffer for amplitude
+            ϕ_slices = helpers.ϕ_slices[:, :, tid]  # Buffer for per-layer phase
+            ϕ_composite = helpers.ϕ_composite[:, :, tid]  # Buffer for composite phase
+            smoothing = helpers.smooth[tid]  # Function to smooth the composite phase
+            unsmoothing = helpers.unsmooth[tid]
+            P = helpers.P[:, :, :, :, tid]  # Pupil function buffers 
+            p = helpers.p[:, :, :, :, tid]  # IFFT of pupil function buffers
+            psfs = helpers.psf[:, :, :, :, tid]  # PSF buffer
+            psf_temp = helpers.psf_temp[:, :, tid]  # Temporary array needed to compute PSF
+            object_patch = helpers.object_patch[:, :, tid]  # Object-times-patch weight buffer
+            image_temp_big = helpers.image_temp_big[:, :, tid]  # Buffer to hold the full-size spectral image
+            image_temp_small = helpers.image_temp_small[dd][:, :, tid]  # Buffer to hold the downsampled spectral image
+            ##
+            for n=1:observation.nsubaps  # Loop through all subaps
+                ## Aliases for subap-dependent parameters
+                subap_image = observation.model_images[:, :, n, t]  # Model image for each subap at each time
+                subap_mask = mask.masks[:, :, n, :]  # Mask for each subap at all wavelengths
+                ##
+                create_image!(subap_image, image_temp_small, image_temp_big, psfs, psf_temp, scale_psfs, object.object, patches.w, object_patch, subap_mask, A, P, p, refraction, iffts, convs, atmosphere.transmission, optics.response, ϕ_composite, ϕ_static, ϕ_slices, x, smoothing, atmosphere.nlayers, extractor, atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, reconstruction.nλ, reconstruction.nλint, reconstruction.Δλ)
+                observation.model_images[:, :, n, t] .+= object.background_flux ./ observation.dim^2  # Add the background, which is specified per image, so scale by the number of pixels first
+                ω[:, :, tid] .= reconstruction.weight_function(observation.entropy[n, t], observation.model_images[:, :, n, t], observation.detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
+                helpers.ϵ_threads[tid] += loglikelihood_gaussian(r[:, :, tid], observation.images[:, :, n, t], observation.model_images[:, :, n, t], ω[:, :, tid])  # Calculate the gaussian likelihood for the calculated model image and data frame
+                reconstruction.gradient_wf(helpers.g_threads_ϕ[:, :, :, :, tid], r[:, :, tid], ω[:, :, tid], P, p, helpers.c[:, :, tid], helpers.d[:, :, tid], helpers.d2[:, :, tid], reconstruction.λtotal, reconstruction.Δλtotal, reconstruction.nλ, reconstruction.nλint, optics.response, atmosphere.transmission, atmosphere.nlayers, helpers.o_corr[:, :, tid], observation.entropy[n, t], patches.npatches, unsmoothing, refraction_adj, extractor_adj, iffts, helpers.containers_builddim_real[:, :, tid], helpers.containers_sdim_real[:, :, tid])
             end
         end
     end
 
     ϵ = sum(helpers.ϵ_threads)
-    for tid=1:Threads.nthreads()
+    for tid=1:Threads.nthreads()  # Add together the gradients computed from each thread
         g .+= helpers.g_threads_ϕ[:, :, :, :, tid]
     end
 
-    # Apply regularization
+    ## Apply regularization
     for l=1:atmosphere.nlayers
         for w₁=1:reconstruction.nλ
             for w₂=1:reconstruction.nλint 
@@ -300,14 +330,13 @@ end
     return ϵ
 end
 
-@views function gradient_phase_mle_gaussiannoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, nlayers, o_corr, entropy, npatches, smoothing, k_corr, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_sdim_real)
-    FTYPE = eltype(r)
+@views function gradient_phase_mle_gaussiannoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, nlayers, precorr_object, entropy, npatches, unsmooth!, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_sdim_real)
     r .*= ω
     block_replicate!(c, r)
     conj!(p)
     for np=1:npatches
         for w₁=1:nλ
-            d2 .= o_corr[w₁, np](c)  # <--
+            precorr_object[w₁, np](d2, c)
             for w₂=1:nλint
                 w = (w₁-1)*nλint + w₂
                 container_builddim_real .= d2
@@ -318,9 +347,7 @@ end
                 d .*= P[:, :, np, w]
                 d2 .= imag.(d)
                 d2 .*= -4 * response[w] * transmission[w]
-                if smoothing == true
-                    d2 .= k_corr(d2)
-                end
+                unsmooth!(d2, d2)
 
                 for l=1:nlayers
                     mul!(container_sdim_real, extractor_adj[np, l, w], d2)
@@ -331,7 +358,7 @@ end
     end
 end
 
-@views function gradient_phase_mle_mixednoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, nlayers, o_corr, entropy, npatches, smoothing, k_corr, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_sdim_real)
+@views function gradient_phase_mle_mixednoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, nlayers, o_corr, entropy, npatches, k_corr, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_sdim_real)
     FTYPE = eltype(r)
     r .= 2 .* ω .* r .- (ω .* r).^2 .* entropy
     block_replicate!(c, r)
@@ -428,7 +455,7 @@ end
                 observation.model_images[:, :, n, t] .+= object.background_flux ./ observation.dim^2
                 ω[:, :, tid] .= reconstruction.weight_function(observation.entropy[n, t], observation.model_images[:, :, n, t], observation.detector.rn)
                 helpers.ϵ_threads[tid] += loglikelihood_gaussian(r[:, :, tid], observation.images[:, :, n, t], observation.model_images[:, :, n, t], ω[:, :, tid])
-                reconstruction.gradient_wf(helpers.g_threads_ϕ[:, :, :, :, tid], r[:, :, tid], ω[:, :, tid], P, p, helpers.c[:, :, tid], helpers.d[:, :, tid], helpers.d2[:, :, tid], reconstruction.λtotal, reconstruction.Δλtotal, reconstruction.nλ, reconstruction.nλint, optics.response, atmosphere.transmission, atmosphere.nlayers, helpers.o_corr[:, :, tid], observation.entropy[n, t], patches.npatches, reconstruction.smoothing, helpers.k_corr[tid], refraction_adj, extractor_adj, helpers.ift[1][tid], helpers.containers_builddim_real[:, :, tid], helpers.containers_sdim_real[:, :, tid])
+                reconstruction.gradient_wf(helpers.g_threads_ϕ[:, :, :, :, tid], r[:, :, tid], ω[:, :, tid], P, p, helpers.c[:, :, tid], helpers.d[:, :, tid], helpers.d2[:, :, tid], reconstruction.λtotal, reconstruction.Δλtotal, reconstruction.nλ, reconstruction.nλint, optics.response, atmosphere.transmission, atmosphere.nlayers, helpers.o_corr[:, :, tid], observation.entropy[n, t], patches.npatches, helpers.k_corr[tid], refraction_adj, extractor_adj, helpers.ift[1][tid], helpers.containers_builddim_real[:, :, tid], helpers.containers_sdim_real[:, :, tid])
             end
         end
     end

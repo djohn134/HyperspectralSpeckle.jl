@@ -1,14 +1,10 @@
 using PerceptualColourMaps
-try
-    using GLMakie
-    GLMakie.activate!()
-catch
-    using CairoMakie
-end
+using GLMakie
+GLMakie.activate!()
 
 const PLOT_OPTIONS = (
     CMAP_OBJECT = cmap("L01"),
-    CMAP_WAVEFRONT = cmap("L20")#:haline
+    CMAP_WAVEFRONT = cmap("L20")
 )
 
 
