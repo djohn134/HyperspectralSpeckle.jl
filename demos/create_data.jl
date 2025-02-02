@@ -55,19 +55,18 @@ masks = [masks_full, masks_wfs]
 
 ### Detector & Observations Parameters ####
 D = 3.6  # m
-fov = 20.0
+fov = 5.0
 pixscale_full = fov / image_dim
 pixscale_wfs = pixscale_full .* nsubaps_side
 qefile = "data/qe/prime-95b_qe.dat"
 ~, qe = readqe(qefile, λ=λ)
-qe ./= qe
 rn = 2.0
 exptime = 5e-3
-noise = false
+noise = true
 ζ = 0.0
 ########## Create Optical System ##########
-# filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
-filter = OpticalElement(λ=[0.0, 10000.0], response=[1.0, 1.0], FTYPE=FTYPE)
+filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
+# filter = OpticalElement(λ=[0.0, 10000.0], response=[1.0, 1.0], FTYPE=FTYPE)
 beamsplitter = OpticalElement(λ=[0.0, 10000.0], response=[0.5, 0.5], FTYPE=FTYPE)
 optics_full = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 # optics_full = OpticalSystem([filterV], λ, verb=verb, FTYPE=FTYPE)
@@ -133,7 +132,7 @@ objectfile = "data/OCNR2.fits"
 # object, ~ = template2object(objectfile, dim, λ, FTYPE=FTYPE)
 object_arr = repeat(block_reduce(readfits(objectfile, FTYPE=FTYPE), image_dim), 1, 1, nλ)
 ~, spectrum = solar_spectrum(λ=λ)
-mag = 4.0
+mag = 6.0
 background_mag = Inf
 flux = mag2flux(λ, spectrum, mag, filter, D=D, ζ=ζ, exptime=exptime)
 background_flux = mag2flux(λ, ones(nλ), background_mag, filter, D=D, ζ=ζ, exptime=exptime)
@@ -156,7 +155,7 @@ writefits(object.object, "$(folder)/object_truth$(id).fits", header=header)
 ###########################################
 
 ########## Anisopatch Parameters ##########
-isoplanatic = true
+isoplanatic = false
 patch_dim = 64
 ###### Create Anisoplanatic Patches #######
 patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FTYPE=FTYPE)

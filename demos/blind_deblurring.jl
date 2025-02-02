@@ -7,7 +7,7 @@ using Statistics;
 FTYPE = Float32;
 # folder = "/home/dan/Desktop/JASS_2024/tests";
 folder = "data/test"
-id = ""
+id = "_mixednoise"
 verb = true
 plot = true
 ###########################################
@@ -37,18 +37,17 @@ patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FT
 
 ### Detector & Observations Parameters ####
 D = 3.6  # m
-fov = 20.0
+fov = 5.0
 pixscale_full = fov / image_dim
 pixscale_wfs = pixscale_full .* nsubaps_side
 qefile = "data/qe/prime-95b_qe.dat"
 ~, qe = readqe(qefile, λ=λ)
-qe ./= qe
-rn = 1.0
+rn = 2.0
 exptime = 5e-3
 ζ = 0.0
 ########## Create Optical System ##########
-# filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
-filter = OpticalElement(λ=[0.0, 10000.0], response=[1.0, 1.0], FTYPE=FTYPE)
+filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
+# filter = OpticalElement(λ=[0.0, 10000.0], response=[1.0, 1.0], FTYPE=FTYPE)
 beamsplitter = OpticalElement(λ=[0.0, 10000.0], response=[0.5, 0.5], FTYPE=FTYPE)
 optics_full = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 ######### Create Full-Ap Detector #########
@@ -135,11 +134,11 @@ masks = [masks_wfs, masks_full]
 ############ Object Parameters ############
 object_height = 515.0  # km
 ############## Create object ##############
-all_subap_images = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background_flux/observations_full.dim^2, 0)
-object_arr = repeat(all_subap_images, 1, 1, nλ)
-object_arr ./= sum(object_arr)
-object_arr .*= mean(sum(observations_full.images, dims=(1, 2, 3))) - background_flux
-# object.object = readfits("$(folder)/object_recon.fits")
+# object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background_flux/observations_full.dim^2, 0)
+# object_arr = repeat(object_arr, 1, 1, nλ)
+# object_arr ./= sum(object_arr)
+# object_arr .*= mean(sum(observations_full.images, dims=(1, 2, 3))) - background_flux
+object_arr = readfits("$(folder)/object_recon_mixednoise.fits")
 # object_arr = readfits("$(folder)/object_truth.fits")
 # object_arr = zeros(FTYPE, image_dim, image_dim, nλ)
 object = Object(
@@ -187,8 +186,8 @@ atmosphere = Atmosphere(
     FTYPE=FTYPE
 )
 ######### Set phase screens start #########
-atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
-# atmosphere.phase = readfits("$(folder)/Dr0_20_phase_full.fits")
+# atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
+atmosphere.phase = readfits("$(folder)/phase_recon_mixednoise.fits")
 ###########################################
 
 ######### Reconstruction Object ###########
@@ -203,13 +202,13 @@ reconstruction = Reconstruction(
     nλint=nλint,
     niter_mfbd=10,
     maxiter=10,
-    # indx_boot=[1:2],
+    indx_boot=[1:2],
     wavefront_parameter=:phase,
     minimization_scheme=:mle,
-    noise_model=:gaussian,
-    maxeval=Dict("wf"=>10000, "object"=>10000),
+    noise_model=:mixed,
+    maxeval=Dict("wf"=>1000, "object"=>10000),
     smoothing=true,
-    # fwhm_schedule=ConstantSchedule(10.0),
+    fwhm_schedule=ConstantSchedule(0.5),
     grtol=1e-9,
     frtol=1e-9,
     xrtol=1e-9,
@@ -218,13 +217,13 @@ reconstruction = Reconstruction(
     plot=plot,
     FTYPE=FTYPE
 );
-reconstruct!(reconstruction, observations, atmosphere, object, masks, patches, write=false, folder=folder, id=id)
+reconstruct!(reconstruction, observations, atmosphere, object, masks, patches, write=true, folder=folder, id=id)
 ###########################################
 
-###########################################
-## Write isoplanatic phases and images ####
-[writefits(observations[dd].model_images, "$(folder)/models_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_recon$(id).fits") for dd=1:reconstruction.ndatasets]
-writefits(object.object, "$(folder)/object_recon$(id).fits")
-writefits(getfield(atmosphere, reconstruction.wavefront_parameter), "$(folder)/$(symbol2str[reconstruction.wavefront_parameter])_recon$(id).fits")
-writefile([reconstruction.ϵ], "$(folder)/recon$(id).dat")
-###########################################
+# ###########################################
+# ## Write isoplanatic phases and images ####
+# [writefits(observations[dd].model_images, "$(folder)/models_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_recon$(id).fits") for dd=1:reconstruction.ndatasets]
+# writefits(object.object, "$(folder)/object_recon$(id).fits")
+# writefits(getfield(atmosphere, reconstruction.wavefront_parameter), "$(folder)/$(symbol2str[reconstruction.wavefront_parameter])_recon$(id).fits")
+# writefile([reconstruction.ϵ], "$(folder)/recon$(id).dat")
+# ###########################################

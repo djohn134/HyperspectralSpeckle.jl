@@ -3,6 +3,11 @@ using Statistics
 using LinearAlgebra
 using OptimPackNextGen
 
+const VERB_LEVELS = Dict(
+    "full"=>Dict("vm"=>true, "vo"=>true),  # Print output from the MFBD iteration, and the output from OptimPackNextGen
+    "mfbd_only"=>Dict("vm"=>true, "vo"=>false),  # Print only the output from the MFBD itration
+    "silent"=>Dict("vm"=>false, "vo"=>false)  # Print nothing
+)
 
 abstract type AbstractReconstruction end
 function Base.display(reconstruction::T) where {T<:AbstractReconstruction}
@@ -110,11 +115,6 @@ mutable struct Helpers{T<:AbstractFloat}
                      verb=true,
                      FTYPE=gettype(atmosphere))
         nλtotal = length(λtotal)
-        # fft_threads = Vector{Vector{Function}}(undef, ndatasets+1)
-        # ifft_threads = Vector{Vector{Function}}(undef, ndatasets+1)
-        # conv_threads = Vector{Vector{Function}}(undef, ndatasets+1)
-        # corr_threads = Vector{Vector{Function}}(undef, ndatasets+1)
-        # autocorr_threads = Vector{Vector{Function}}(undef, ndatasets+1)
         fft_threads = [setup_fft(FTYPE, build_dim)[1] for ~=1:Threads.nthreads()]
         ifft_threads = [setup_ifft(Complex{FTYPE}, build_dim)[1] for ~=1:Threads.nthreads()]
         conv_threads = [setup_conv(FTYPE, build_dim) for ~=1:Threads.nthreads()]
@@ -161,12 +161,6 @@ mutable struct Helpers{T<:AbstractFloat}
         refraction = Matrix{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}}(undef, ndatasets, nλtotal)
         refraction_adj = Matrix{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}}(undef, ndatasets, nλtotal)
         for dd=1:ndatasets
-            # fft_threads[dd+1] = [setup_fft(observations[dd].dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
-            # ifft_threads[dd+1] = [setup_ifft(observations[dd].dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
-            # conv_threads[dd+1] = [setup_conv_r2r(observations[dd].dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
-            # corr_threads[dd+1] = [setup_corr_r2r(observations[dd].dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
-            # autocorr_threads[dd+1] = [setup_autocorr(observations[dd].dim, FTYPE=FTYPE) for ~=1:Threads.nthreads()]
-
             r[dd] = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
             ω[dd] = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
             mask_acf[dd] = ones(FTYPE, observations[dd].dim, observations[dd].dim)
@@ -248,8 +242,8 @@ mutable struct Reconstruction{T<:AbstractFloat} <: AbstractReconstruction
             maxFWHM=50.0,
             minFWHM=0.5,
             fwhm_schedule=ExponentialSchedule(maxFWHM, niter_mfbd, minFWHM),
-            regularizers=[],
-            helpers=[],
+            regularizers=nothing,
+            helpers=nothing,
             verb=true,
             mfbd_verb_level="full",
             plot=true,
@@ -269,7 +263,7 @@ mutable struct Reconstruction{T<:AbstractFloat} <: AbstractReconstruction
         fg_wf = getfield(Main, Symbol("fg_$(wavefront_parameter)_$(minimization_scheme)"))
         gradient_wf = getfield(Main, Symbol("gradient_$(wavefront_parameter)_$(minimization_scheme)_$(noise_model)noise!"))
         
-        if helpers == []
+        if isnothing(helpers)
             helpers = Helpers(
                 atmosphere, 
                 observations,
@@ -280,7 +274,7 @@ mutable struct Reconstruction{T<:AbstractFloat} <: AbstractReconstruction
             );
         end
 
-        if regularizers == []
+        if isnothing(regularizers)
             regularizers = Regularizers(verb=verb, FTYPE=FTYPE)
         end
 
@@ -289,18 +283,7 @@ mutable struct Reconstruction{T<:AbstractFloat} <: AbstractReconstruction
             observations[dd].w = findall((observations[dd].optics.response .* observations[dd].detector.qe) .> 0)
         end
 
-        if mfbd_verb_level == "full"
-            vm = true
-            vo = true
-        elseif mfbd_verb_level == "mfbd"
-            vm = true
-            vo = false
-        elseif mfbd_verb_level == "silent"
-            vm = false
-            vo = false
-        end
-        verb_levels = Dict("vm"=>vm, "vo"=>vo)
-
+        verb_levels = VERB_LEVELS[mfbd_verb_level]
         if plot == true
             figs = ReconstructionFigures()
             if wavefront_parameter == :static_phase
@@ -338,6 +321,7 @@ function reconstruct!(reconstruction, observations, atmosphere, object, masks, p
     for b=1:reconstruction.niter_boot
         current_observations = observations[reconstruction.indx_boot[b]]
         current_masks = masks[reconstruction.indx_boot[b]]
+        ϵ₀ = zero(FTYPE)
         reconstruction.ϵ = zero(FTYPE)
         for current_iter=1:reconstruction.niter_mfbd
             absolute_iter = (b-1)*reconstruction.niter_mfbd + current_iter        
@@ -360,6 +344,7 @@ function reconstruct!(reconstruction, observations, atmosphere, object, masks, p
             ## Reconstruct Phase
             crit_wf = (x, g) -> reconstruction.fg_wf(x, g, current_observations, atmosphere, current_masks, patches, reconstruction, object)
             vmlmb!(crit_wf, getproperty(atmosphere, reconstruction.wavefront_parameter), verb=reconstruction.verb_levels["vo"], fmin=0, mem=5, maxiter=reconstruction.maxiter, gtol=(0, reconstruction.grtol), ftol=(0, reconstruction.frtol), xtol=(0, reconstruction.xrtol), maxeval=reconstruction.maxeval["wf"])
+            ϵ₀ = deepcopy(reconstruction.ϵ)
             if reconstruction.plot == true
                 update_layer_figure(atmosphere, reconstruction)
             end
@@ -385,6 +370,10 @@ function reconstruct!(reconstruction, observations, atmosphere, object, masks, p
                 writefits(object.object, "$(folder)/object_recon$(id).fits")
                 writefits(getfield(atmosphere, reconstruction.wavefront_parameter), "$(folder)/$(symbol2str[reconstruction.wavefront_parameter])_recon$(id).fits")
                 writefile([reconstruction.ϵ], "$(folder)/recon$(id).dat")
+            end
+
+            if reconstruction.ϵ == ϵ₀
+                break
             end
             GC.gc()
         end
