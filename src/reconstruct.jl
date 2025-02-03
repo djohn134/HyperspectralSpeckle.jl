@@ -164,7 +164,6 @@ mutable struct Helpers{T<:AbstractFloat}
             r[dd] = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
             ω[dd] = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
             mask_acf[dd] = ones(FTYPE, observations[dd].dim, observations[dd].dim)
-            # mask_acf[dd][observations[dd].dim÷2+1 - observations[dd].dim÷4:observations[dd].dim÷2+1 + observations[dd].dim÷4, observations[dd].dim÷2+1 - observations[dd].dim÷4:observations[dd].dim÷2+1 + observations[dd].dim÷4] .= 1
             mask_acf[dd][observations[dd].dim÷2+1, observations[dd].dim÷2+1] = 0
             image_temp_small[dd] = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
             containers_pdim_real[dd] = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)

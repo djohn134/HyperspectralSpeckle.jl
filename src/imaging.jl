@@ -228,28 +228,33 @@ end
         if verb == true
             println("Creating $(observations[dd].dim)×$(observations[dd].dim) images for $(observations[dd].nepochs) times and $(observations[dd].nsubaps) subaps using eff model")
         end
+        DTYPE = gettypes(observations[dd].detector)[end]
         image_small_temp = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
         refraction = [create_refraction_operator(atmosphere.λ[w], atmosphere.λ_ref, observations[dd].ζ, observations[dd].detector.pixscale, build_dim, FTYPE=FTYPE) for w=1:atmosphere.nλ]
         extractors = create_patch_extractors(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
-        observations[dd].images = zeros(FTYPE, observations[dd].dim, observations[dd].dim, observations[dd].nsubaps, observations[dd].nepochs)
-        create_images!(patches, observations[dd], atmosphere, masks[dd], object, image_small_temp, image_big_temp, psfs, psf_temp, object_patch, A, P, p, refraction, iffts, convs, ϕ_composite, ϕ_slices, extractors, noise=noise)
+        images_float = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
+        observations[dd].images = zeros(DTYPE, observations[dd].dim, observations[dd].dim, observations[dd].nsubaps, observations[dd].nepochs)
+        create_images!(patches, observations[dd], atmosphere, masks[dd], object, images_float, image_small_temp, image_big_temp, psfs, psf_temp, object_patch, A, P, p, refraction, iffts, convs, ϕ_composite, ϕ_slices, extractors, noise=noise)
     end
 end
 
-@views function create_images!(patches, observations, atmosphere, masks, object, image_small_temp, image_big_temp, psf, psf_temp, object_patch, A, P, p, refraction, iffts, convs, ϕ_composite, ϕ_slices, extractors; noise=false)
+@views function create_images!(patches, observations, atmosphere, masks, object, images_float, image_small_temp, image_big_temp, psf, psf_temp, object_patch, A, P, p, refraction, iffts, convs, ϕ_composite, ϕ_slices, extractors; noise=false)
     FTYPE = gettype(observations)
+    DTYPE = gettypes(observations.detector)[end]
     nλint = 1
     smoothing!(out, in) = nothing
     Threads.@threads :static for t=1:observations.nepochs
         tid = Threads.threadid()
         for n=1:observations.nsubaps
-            create_image!(observations.images[:, :, n, t], image_small_temp[:, :, tid], image_big_temp[:, :, tid], psf[:, :, tid], psf_temp[:, :, tid], masks.scale_psfs, object.object, patches.w, object_patch[:, :, tid], masks.masks[:, :, n, :], A[:, :, tid], P[:, :, tid], p[:, :, tid], refraction, iffts[tid], convs[tid], atmosphere.transmission, observations.optics.response, ϕ_composite[:, :, tid], observations.phase_static, ϕ_slices[:, :, tid], atmosphere.phase, smoothing!, atmosphere.nlayers, extractors[t, :, :, :], atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, atmosphere.nλ, nλint, atmosphere.Δλ)
-            observations.images[:, :, n, t] .= max.(zero(FTYPE), observations.images[:, :, n, t])
-            add_background!(observations.images[:, :, n, t], object.background_flux, FTYPE=FTYPE)
+            create_image!(images_float[:, :, tid], image_small_temp[:, :, tid], image_big_temp[:, :, tid], psf[:, :, tid], psf_temp[:, :, tid], masks.scale_psfs, object.object, patches.w, object_patch[:, :, tid], masks.masks[:, :, n, :], A[:, :, tid], P[:, :, tid], p[:, :, tid], refraction, iffts[tid], convs[tid], atmosphere.transmission, observations.optics.response, ϕ_composite[:, :, tid], observations.phase_static, ϕ_slices[:, :, tid], atmosphere.phase, smoothing!, atmosphere.nlayers, extractors[t, :, :, :], atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, atmosphere.nλ, nλint, atmosphere.Δλ)
+            images_float[:, :, tid] .= max.(zero(FTYPE), images_float[:, :, tid])
+            add_background!(images_float[:, :, tid], object.background_flux.*mean(observations.detector.qe), FTYPE=FTYPE)  # Background flux is in ph, converted to e⁻ using the mean qe of the detector
             if noise == true
-                add_noise!(observations.images[:, :, n, t], observations.detector.rn, true, FTYPE=FTYPE)
+                add_noise!(images_float[:, :, tid], observations.detector.rn, true, FTYPE=FTYPE)
             end
-            observations.images[:, :, n, t] .= min.(observations.images[:, :, n, t], observations.detector.saturation)
+            images_float[:, :, tid] .= min.(images_float[:, :, tid], observations.detector.saturation)
+            images_float[:, :, tid] ./= observations.detector.gain  # Converts e⁻ to counts
+            observations.images[:, :, n, t] .= floor.(DTYPE, images_float[:, :, tid]) # Converts floating-point counts to integer at bitdepth of detector
         end
     end
 end

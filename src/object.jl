@@ -58,65 +58,14 @@ mutable struct Object{T<:AbstractFloat} <: AbstractObject
     end
 end
 
-function mag2flux(mag; D=3.6, ζ=0.0, exptime=20e-3, qe=0.7, adc_gain = 1.0, filter_="V")
-    area = pi*(D/2)^2
-    airmass = sec(ζ*pi/180)
-    nphotons, extinct_coeff = magnitude_zeropoint(filter_=filter_);
-    # calculate number of ADU counts on the CCD from star, total
-    adu = adc_gain * qe * exptime * area * 10.0^(-0.4*mag) * nphotons * 10^(-0.4*airmass*extinct_coeff);
-    return adu 
-end
-
-function mag2flux(λ, spectrum, mag, filter_; D=3.6, ζ=0.0, exptime=20e-3)
+function mag2flux(mag, filter; D=3.6, ζ=0.0, exptime=20e-3)
     ## Flux at top of atmosphere
     area = pi*(D/2)^2
     airmass = sec(ζ*pi/180)
-    λfilter, filter_response = filter_.λ, filter_.response
-    nphotons_vega = magnitude_zeropoint(λfilter, filter_response);
+    λfilter, filter_response = filter.λ, filter.response
+    nphotons_vega = exptime * area * magnitude_zeropoint(λfilter, filter_response);
     nphotons = nphotons_vega * 10^(-(mag+0.3*airmass)/2.5)
-    scaled_spectrum = (spectrum ./ sum(spectrum)) .* nphotons
-    # calculate number of ADU counts on the CCD from star, per wavelength
-    adu_λ = (exptime * area) .* scaled_spectrum
-    # calculate number of ADU counts on the CCD from star, total
-    adu = length(λ) > 1 ? NumericalIntegration.integrate(λ, adu_λ) : adu_λ[1]
-    return adu 
-end
-
-function magnitude_zeropoint(; filter_="none")
-# Photons per square meter per second produced by a 0th mag star above the atmosphere.
-# Assuming spectrum like Vega
-    nphot = -1.0;
-    coeff = 1.0; # extinction
-    if (filter_ == "none") 
-        nphot = 4.32e+10;
-        coeff = 0.20;
-    elseif (filter_ == "U")
-        nphot = 5.50e+9;
-        coeff = 0.60;
-    elseif (filter_ == "B")
-        nphot = 3.91e+9;
-        coeff = 0.40;
-    elseif (filter_ == "V")
-        nphot = 8.66e+9;
-        coeff = 0.20;
-    elseif (filter_ == "R")
-        nphot = 1.10e+10;
-        coeff = 0.10;
-    elseif (filter_ == "I")
-        nphot = 6.75e+9;
-        coeff = 0.08;
-    end
-    return nphot, coeff;
-end
-
-function magnitude_zeropoint(λmin, λmax, λfilter, filter_response)
-    # Photons per square meter per second produced by a 0th mag star above the atmosphere.
-    # Assuming spectrum like Vega
-    λ = range(λmin, stop=λmax, length=101)
-    λ, flux = vega_spectrum(λ=λ)
-    filter_itp = interpolate((λfilter,), filter_response, Gridded(Linear()))
-    nphot = NumericalIntegration.integrate(λ, flux .* filter_itp(λ))
-    return nphot
+    return nphotons 
 end
 
 function magnitude_zeropoint(λfilter, filter_response)

@@ -556,7 +556,7 @@ function smooth_to_resolution(λ, F, resolution)
     σ = fwhm / 2.35482
     k = exp.(-x.^2 ./ σ^2)
     k ./= sum(k)
-    F_smooth = conv_psf(F, k)
+    F_smooth = conv(F, k)
     return F_smooth
 end
 
@@ -568,9 +568,9 @@ end
 
 function readtransmission(filename; resolution=Inf, λ=[])
     λtransmission, transmission = readfile(filename)
-    if resolution != Inf
-        transmission .= smooth_to_resolution(λtransmission, transmission, resolution)
-    end
+    # if resolution != Inf
+    #     transmission .= smooth_to_resolution(λtransmission, transmission, resolution)
+    # end
 
     if λ == []
         λ = λtransmission

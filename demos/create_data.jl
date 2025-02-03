@@ -58,9 +58,12 @@ D = 3.6  # m
 fov = 5.0
 pixscale_full = fov / image_dim
 pixscale_wfs = pixscale_full .* nsubaps_side
+DTYPE = UInt16
 qefile = "data/qe/prime-95b_qe.dat"
 ~, qe = readqe(qefile, λ=λ)
 rn = 2.0
+saturation = 30000.0
+gain = saturation / (typemax(DTYPE))
 exptime = 5e-3
 noise = true
 ζ = 0.0
@@ -75,11 +78,13 @@ detector_full = Detector(
     qe=qe,
     rn=rn,
     pixscale=pixscale_full,
+    saturation=30000.0,
     λ=λ,
     λ_nyquist=λ_nyquist,
     exptime=exptime,
     verb=verb,
-    FTYPE=FTYPE
+    FTYPE=FTYPE,
+    DTYPE=DTYPE
 )
 ### Create Full-Ap Observations object ####
 ϕ_static_full = zeros(FTYPE, image_dim, image_dim, nλ)
@@ -103,11 +108,14 @@ detector_wfs = Detector(
     qe=qe,
     rn=rn,
     pixscale=pixscale_wfs,
+    gain=gain,
+    saturation=saturation,
     λ=λ,
     λ_nyquist=λ_nyquist,
     exptime=exptime,
     verb=verb,
-    FTYPE=FTYPE
+    FTYPE=FTYPE,
+    DTYPE=DTYPE
 )
 ### Create Full-Ap Observations object ####
 ϕ_static_wfs = zeros(FTYPE, image_dim, image_dim, nλ)
@@ -132,10 +140,10 @@ objectfile = "data/OCNR2.fits"
 # object, ~ = template2object(objectfile, dim, λ, FTYPE=FTYPE)
 object_arr = repeat(block_reduce(readfits(objectfile, FTYPE=FTYPE), image_dim), 1, 1, nλ)
 ~, spectrum = solar_spectrum(λ=λ)
-mag = 6.0
-background_mag = Inf
-flux = mag2flux(λ, spectrum, mag, filter, D=D, ζ=ζ, exptime=exptime)
-background_flux = mag2flux(λ, ones(nλ), background_mag, filter, D=D, ζ=ζ, exptime=exptime)
+mag = 4.0
+background_mag = 4.0
+flux = mag2flux(mag, filter, D=D, ζ=ζ, exptime=exptime)
+background_flux = mag2flux(background_mag, filter, D=D, ζ=ζ, exptime=exptime)
 background_flux *= fov^2
 object_height = 515.0  # km
 ############## Create object ##############
@@ -181,8 +189,8 @@ seeds = [713, 1212, 525118]
 Dmeta = D .+ (fov/206265) .* (heights .* 1000)
 sampling_nyquist_mperpix = layer_nyquist_sampling_mperpix(D, image_dim, nlayers)
 sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heights, image_dim)
-# ~, transmission = readtransmission("data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
-transmission = ones(FTYPE, nλ)
+~, transmission = readtransmission("data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
+# transmission = ones(FTYPE, nλ)
 ############ Create Atmosphere ############
 atmosphere = Atmosphere(
     λ,

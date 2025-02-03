@@ -27,7 +27,7 @@ abstract type AbstractDetector end
 abstract type AbstractOpticalSystem end
 abstract type AbstractObservations end
 function Base.display(detector::T) where {T<:AbstractDetector}
-    ~, DTYPE = gettypes(detector)
+    DTYPE = gettypes(detector)[end]
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Detector\n"); print(Crayon(reset=true))
     println("\tBit Depth: $(DTYPE)")
     println("\tRN: $(detector.rn) e⁻")
@@ -47,7 +47,7 @@ end
 
 function Base.display(observations::T) where {T<:AbstractObservations}
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Observations\n"); print(Crayon(reset=true))
-    println("\tImage Size: $(observations.dim)x$(observations.dim) pixels")
+    println("\tImage Size: $(observations.dim)×$(observations.dim) pixels")
     println("\tNumber of frames: $(observations.nepochs)")
     println("\tNumber of subapertures: $(observations.nsubaps_side)×$(observations.nsubaps_side) subapertures")
     println("\tTelescope Diameter: $(observations.D) m")
@@ -179,26 +179,26 @@ mutable struct Observations{T<:AbstractFloat, S<:Real} <: AbstractObservations
         return observations
     end
     function Observations(
-        images,
-        optics,
-        detector;
-        ζ=Inf,
-        D=Inf,
-        nsubaps_side=1,
-        ϕ_static=[;;;],
-        verb=true,
-        FTYPE=Float64
-    )
-    dim, ~, nsubaps, nepochs = size(images)
-    entropy = [calculate_entropy(images[:, :, n, t]) for n=1:nsubaps, t=1:nepochs]
-    DTYPE = gettypes(detector)[2]
-    optics.response .*= detector.qe
-    observations = new{FTYPE, DTYPE}(optics, ϕ_static, detector, ζ, D, nepochs, nsubaps, nsubaps_side, dim, images, entropy)
-    if verb == true
-        display(observations)
+            images,
+            optics,
+            detector;
+            ζ=Inf,
+            D=Inf,
+            nsubaps_side=1,
+            ϕ_static=[;;;],
+            verb=true,
+            FTYPE=Float64
+        )
+        dim, ~, nsubaps, nepochs = size(images)
+        entropy = [calculate_entropy(images[:, :, n, t]) for n=1:nsubaps, t=1:nepochs]
+        DTYPE = gettypes(detector)[2]
+        optics.response .*= detector.qe
+        observations = new{FTYPE, DTYPE}(optics, ϕ_static, detector, ζ, D, nepochs, nsubaps, nsubaps_side, dim, images, entropy)
+        if verb == true
+            display(observations)
+        end
+        return observations
     end
-    return observations
-end
 end
 
 @views function calculate_wfs_slopes(observations_wfs)

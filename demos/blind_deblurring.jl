@@ -167,8 +167,8 @@ nlayers = length(heights)
 scaleby_wavelength = λ_nyquist ./ λ
 sampling_nyquist_mperpix = layer_nyquist_sampling_mperpix(D, image_dim, nlayers)
 sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heights, image_dim)
-# ~, transmission = readtransmission("data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
-transmission = ones(FTYPE, nλ)
+~, transmission = readtransmission("data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
+# transmission = ones(FTYPE, nλ)
 ############ Create Atmosphere ############
 atmosphere = Atmosphere(
     λ,
