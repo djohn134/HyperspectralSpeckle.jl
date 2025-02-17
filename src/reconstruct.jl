@@ -3,6 +3,7 @@ using Statistics
 using LinearAlgebra
 using OptimPackNextGen
 
+
 const VERB_LEVELS = Dict(
     "full"=>Dict("vm"=>true, "vo"=>true),  # Print output from the MFBD iteration, and the output from OptimPackNextGen
     "mfbd_only"=>Dict("vm"=>true, "vo"=>false),  # Print only the output from the MFBD itration
@@ -13,7 +14,7 @@ abstract type AbstractReconstruction end
 function Base.display(reconstruction::T) where {T<:AbstractReconstruction}
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Reconstruction\n"); print(Crayon(reset=true))
     println("\tImage build size: $(reconstruction.build_dim)×$(reconstruction.build_dim) pixels")
-    println("\tWavelength: $(minimum(reconstruction.λ))—$(maximum(reconstruction.λ)) nm")
+    println("\tWavelength: $(minimum(reconstruction.λ)) — $(maximum(reconstruction.λ)) m")
     println("\tNumber of wavelength: $(reconstruction.nλ)")
     println("\tNumber of integrated wavelengths: $(reconstruction.nλint)")
     println("\tNumber of data channels: $(reconstruction.ndatasets)")
@@ -169,7 +170,7 @@ mutable struct Helpers{T<:AbstractFloat}
             containers_pdim_real[dd] = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
             containers_pdim_cplx[dd] = zeros(Complex{FTYPE}, observations[dd].dim, observations[dd].dim, nthreads)
             scaleby_wavelength = [observations[dd].detector.λ_nyquist / λtotal[w] for w=1:nλtotal]
-            scaleby_height = layer_scale_factors(atmosphere.heights, object.height)            
+            scaleby_height = layer_scale_factors(atmosphere.heights, object.range)            
             refraction[dd, :] .= create_refraction_operator.(λtotal, atmosphere.λ_ref, observations[dd].ζ, observations[dd].detector.pixscale, build_dim, FTYPE=FTYPE)
             refraction_adj[dd, :] .= create_refraction_adjoint.(λtotal, atmosphere.λ_ref, observations[dd].ζ, observations[dd].detector.pixscale, build_dim, FTYPE=FTYPE)
             extractor[dd, :, :, :, :] .= create_patch_extractors(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
@@ -343,7 +344,6 @@ function reconstruct!(reconstruction, observations, atmosphere, object, masks, p
             ## Reconstruct Phase
             crit_wf = (x, g) -> reconstruction.fg_wf(x, g, current_observations, atmosphere, current_masks, patches, reconstruction, object)
             vmlmb!(crit_wf, getproperty(atmosphere, reconstruction.wavefront_parameter), verb=reconstruction.verb_levels["vo"], fmin=0, mem=5, maxiter=reconstruction.maxiter, gtol=(0, reconstruction.grtol), ftol=(0, reconstruction.frtol), xtol=(0, reconstruction.xrtol), maxeval=reconstruction.maxeval["wf"])
-            ϵ₀ = deepcopy(reconstruction.ϵ)
             if reconstruction.plot == true
                 update_layer_figure(atmosphere, reconstruction)
             end
@@ -374,6 +374,7 @@ function reconstruct!(reconstruction, observations, atmosphere, object, masks, p
             if reconstruction.ϵ == ϵ₀
                 break
             end
+            ϵ₀ = reconstruction.ϵ
             GC.gc()
         end
     end
@@ -383,52 +384,52 @@ function reconstruct!(reconstruction, observations, atmosphere, object, masks, p
     end
 end
 
-function reconstruct_static_phase!(reconstruction, observations, atmosphere, object, masks, patches; closeplots=true, write=false, folder="", id="")
-    FTYPE = gettype(reconstruction)
-    for dd=1:reconstruction.ndatasets
-        reconstruction.ϵ = zero(FTYPE)
-        for current_iter=1:reconstruction.niter_mfbd
-            update_hyperparams(reconstruction, current_iter)
-            preconvolve_smoothing(reconstruction)
-            preconvolve_object(reconstruction, patches, object)
+# function reconstruct_static_phase!(reconstruction, observations, atmosphere, object, masks, patches; closeplots=true, write=false, folder="", id="")
+#     FTYPE = gettype(reconstruction)
+#     for dd=1:reconstruction.ndatasets
+#         reconstruction.ϵ = zero(FTYPE)
+#         for current_iter=1:reconstruction.niter_mfbd
+#             update_hyperparams(reconstruction, current_iter)
+#             preconvolve_smoothing(reconstruction)
+#             preconvolve_object(reconstruction, patches, object)
 
-            if reconstruction.verb_levels["vm"] == true
-                print("Channel: $(dd) Iter: $(current_iter) ")
-                if reconstruction.smoothing == true
-                    print("FWHM: $(reconstruction.fwhm_schedule(current_iter)) ")
-                end
-            end
+#             if reconstruction.verb_levels["vm"] == true
+#                 print("Channel: $(dd) Iter: $(current_iter) ")
+#                 if reconstruction.smoothing == true
+#                     print("FWHM: $(reconstruction.fwhm_schedule(current_iter)) ")
+#                 end
+#             end
 
-            ## Reconstruct complex pupil
-            if reconstruction.verb_levels["vm"] == true
-                print("--> Reconstructing static phase ")
-            end
+#             ## Reconstruct complex pupil
+#             if reconstruction.verb_levels["vm"] == true
+#                 print("--> Reconstructing static phase ")
+#             end
 
-            ## Reconstruct Phase
-            crit_phase_static = (x, g) -> fg_static_phase_mle(x, g, observations, atmosphere, masks, patches, reconstruction)
-            vmlmb!(crit_phase_static, observations[dd].phase_static, verb=reconstruction.verb_levels["vo"], fmin=0, mem=5, maxiter=reconstruction.maxiter, gtol=(0, reconstruction.grtol), ftol=(0, reconstruction.frtol), xtol=(0, reconstruction.xrtol), maxeval=reconstruction.maxeval["wf"])
-            update_static_phase_figure(atmosphere, reconstruction)
+#             ## Reconstruct Phase
+#             crit_phase_static = (x, g) -> fg_static_phase_mle(x, g, observations, atmosphere, masks, patches, reconstruction)
+#             vmlmb!(crit_phase_static, observations[dd].phase_static, verb=reconstruction.verb_levels["vo"], fmin=0, mem=5, maxiter=reconstruction.maxiter, gtol=(0, reconstruction.grtol), ftol=(0, reconstruction.frtol), xtol=(0, reconstruction.xrtol), maxeval=reconstruction.maxeval["wf"])
+#             update_static_phase_figure(atmosphere, reconstruction)
 
-            ## Compute final criterion
-            if reconstruction.verb_levels["vm"] == true
-                print("--> ϵ:\t$(reconstruction.ϵ)\n")
-            end
+#             ## Compute final criterion
+#             if reconstruction.verb_levels["vm"] == true
+#                 print("--> ϵ:\t$(reconstruction.ϵ)\n")
+#             end
 
-            if write == true
-                writefits(observations[dd].model_images, "$(folder)/static_models_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_recon$(id).fits")
-                writefits(observations[dd].static_phase, "$(folder)/static_phase_recon$(id).fits")
-                writefile([reconstruction.ϵ], "$(folder)/static_recon$(id).dat")
-            end
-            GC.gc()
-        end
-    end
+#             if write == true
+#                 writefits(observations[dd].model_images, "$(folder)/static_models_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_recon$(id).fits")
+#                 writefits(observations[dd].static_phase, "$(folder)/static_phase_recon$(id).fits")
+#                 writefile([reconstruction.ϵ], "$(folder)/static_recon$(id).dat")
+#             end
+#             GC.gc()
+#         end
+#     end
 
-    if (reconstruction.plot == true) && (closeplots == true)
-        GLMakie.closeall()
-    end
-end
+#     if (reconstruction.plot == true) && (closeplots == true)
+#         GLMakie.closeall()
+#     end
+# end
 
-@views function height_solve!(observations, atmosphere, object, patches, masks, reconstruction; hmin=ones(atmosphere.nlayers-1), hmax=30.0.*ones(atmosphere.nlayers-1), hstep=ones(atmosphere.nlayers-1), niters=1, verb=true)
+@views function height_solve!(observations, atmosphere, object, patches, masks, reconstruction; hmin=1000.0.*ones(atmosphere.nlayers-1), hmax=30000.0.*ones(atmosphere.nlayers-1), hstep=1000.0.*ones(atmosphere.nlayers-1), niters=1, verb=true)
     if verb == true
         println("Solving heights for $(atmosphere.nlayers-1) layers")
     end
@@ -504,14 +505,12 @@ end
     FTYPE = gettype(reconstruction)
     helpers = reconstruction.helpers
 
-    if reconstruction.smoothing == true
-        for tid=1:Threads.nthreads()
+    for tid=1:Threads.nthreads()
+        if reconstruction.smoothing == true
             helpers.smooth[tid] = preconvolve(fftshift(helpers.smoothing_kernel))
             helpers.unsmooth[tid] = precorrelate(fftshift(helpers.smoothing_kernel))
-        end
-    else
-        do_nothing(out, in) = nothing
-        for tid=1:Threads.nthreads()
+        else
+            do_nothing(out, in) = nothing
             helpers.smooth[tid] = do_nothing
             helpers.unsmooth[tid] = do_nothing
         end

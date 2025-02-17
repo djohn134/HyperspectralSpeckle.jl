@@ -32,17 +32,17 @@ function Base.display(detector::T) where {T<:AbstractDetector}
     println("\tBit Depth: $(DTYPE)")
     println("\tRN: $(detector.rn) e⁻")
     println("\tGain: $(detector.gain) e⁻/ADU")
-    println("\tSaturation: $(detector.saturation)")
+    println("\tSaturation: $(detector.saturation) e⁻")
     println("\tExposure time: $(detector.exptime) s")
     println("\tPlate Scale: $(detector.pixscale) arcsec/pix")
-    println("\tWavelength: $(minimum(detector.λ))—$(maximum(detector.λ)) nm")
-    println("\tNyquist sampled wavelength: $(detector.λ_nyquist) nm")
+    println("\tWavelength: $(minimum(detector.λ)) — $(maximum(detector.λ)) m")
+    println("\tNyquist sampled wavelength: $(detector.λ_nyquist) m")
 end
 
 function Base.display(optical_system::T) where {T<:AbstractOpticalSystem}
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Optical system\n"); print(Crayon(reset=true))
     println("\tNumber of elements: $(length(optical_system.elements))")
-    println("\tWavelength: $(minimum(optical_system.λ))—$(maximum(optical_system.λ)) nm")
+    println("\tWavelength: $(minimum(optical_system.λ)) — $(maximum(optical_system.λ)) m")
 end
 
 function Base.display(observations::T) where {T<:AbstractObservations}
@@ -70,6 +70,7 @@ struct OpticalElement{T<:AbstractFloat}
         )
         if name != ""
             λ₀, response = readfile(ELEMENT_FILENAMES["$name"])
+            λ₀ .*= 1e-9
             if λ != []
                 itp = LinearInterpolation(λ₀, response, extrapolation_bc=Line())
                 response = max.(0.0, itp(λ))

@@ -15,9 +15,10 @@ function Base.display(atmosphere::T) where {T<:AbstractAtmosphere}
     println("\tWind direction: $(atmosphere.wind[:, 2]) deg")
     println("\tInner scale: $(atmosphere.l0) m")
     println("\tOuter scale: $(atmosphere.L0) m")
+    println("\tLayer Heights: $(atmosphere.heights) m")
     println("\tFried paremeter: $(atmosphere.r0) m")
     println("\tReference wavelength: $(atmosphere.λ_ref) nm")
-    println("\tWavelength: $(minimum(atmosphere.λ))—$(maximum(atmosphere.λ)) nm")
+    println("\tWavelength: $(minimum(atmosphere.λ)) — $(maximum(atmosphere.λ)) m")
     println("\tNumber of wavelengths: $(length(atmosphere.λ)) wavelengths")
     println("\tPropagate: $(atmosphere.propagate)")
 end
@@ -74,7 +75,7 @@ mutable struct Atmosphere{T<:AbstractFloat} <: AbstractAtmosphere
         if verb == true
             display(atmosphere)
         end
-        calculate_atmosphere_parameters!(atmosphere, observations_full, masks_full, object, patches)
+        calculate_atmosphere_parameters!(atmosphere, observations_full, masks_full, object, patches, verb=verb)
         if create_screens == true
             create_phase_screens!(atmosphere, observations_full)
             atmosphere.phase .*= atmosphere.masks
@@ -84,7 +85,7 @@ mutable struct Atmosphere{T<:AbstractFloat} <: AbstractAtmosphere
 end
 
 function layer_nyquist_sampling_arcsecperpix(D, fov, layer_heights, image_dim)
-    Dmeta = D .+ (fov / 206265) .* (layer_heights .* 1000)
+    Dmeta = D .+ (fov / 206265) .* layer_heights
     sampling_nyquist_arcsecperpix = (fov / image_dim) .* (2*D ./ Dmeta)
     return sampling_nyquist_arcsecperpix
 end
@@ -174,7 +175,7 @@ function layer_scale_factors(layer_heights, object_height)
 end
 
 function calculate_screen_size!(atmosphere, observations; verb=true)
-    Δpos_meters = observations.detector.exptime .* [atmosphere.wind[:, 1].*sin.(atmosphere.wind[:, 2].*pi/180) atmosphere.wind[:, 1].*cos.(atmosphere.wind[:, 2].*pi/180)]'
+    Δpos_meters = observations.detector.exptime .* [atmosphere.wind[:, 1].*sind.(atmosphere.wind[:, 2]) atmosphere.wind[:, 1].*cosd.(atmosphere.wind[:, 2])]'
     Δpos_pix = Δpos_meters ./ minimum(atmosphere.sampling_nyquist_mperpix)
     Δpos_pix_total = Δpos_pix .* (observations.nepochs - 1)
     Δpix_refraction = maximum(abs.(refraction_at_layer_pix(atmosphere, observations)))
@@ -185,11 +186,11 @@ function calculate_screen_size!(atmosphere, observations; verb=true)
 end
 
 function calculate_screen_size!(atmosphere, observations, object, patches; verb=true)
-    Δpos_meters = observations.detector.exptime .* [atmosphere.wind[:, 1].*sin.(atmosphere.wind[:, 2].*pi/180) atmosphere.wind[:, 1].*cos.(atmosphere.wind[:, 2].*pi/180)]'
+    Δpos_meters = observations.detector.exptime .* [atmosphere.wind[:, 1].*sind.(atmosphere.wind[:, 2]) atmosphere.wind[:, 1].*cosd.(atmosphere.wind[:, 2])]'
     Δpos_pix = Δpos_meters ./ minimum(atmosphere.sampling_nyquist_mperpix)
     Δpos_pix_total = Δpos_pix .* (observations.nepochs - 1)
     Δpix_refraction = maximum(abs.(refraction_at_layer_pix(atmosphere, observations)))
-    Δpix_aniso = 2*maximum(abs.(patches.positions)) * (object.sampling_arcsecperpix / 206265) * maximum(atmosphere.heights)*1000 / minimum(atmosphere.sampling_nyquist_mperpix)
+    Δpix_aniso = 2*maximum(abs.(patches.positions)) * (object.sampling_arcsecperpix / 206265) * maximum(atmosphere.heights) / minimum(atmosphere.sampling_nyquist_mperpix)
     atmosphere.dim = nextprod((2, 3, 5, 7), maximum(ceil.(abs.(Δpos_pix_total))) + observations.dim + Δpix_refraction + Δpix_aniso)
     if verb == true
         println("\tSize: $(atmosphere.dim)×$(atmosphere.dim) pixels")
@@ -202,7 +203,7 @@ end
     end
     
     FTYPE = gettype(atmosphere)
-    Δpos_meters = observations.detector.exptime .* [atmosphere.wind[:, 1].*sin.(atmosphere.wind[:, 2].*pi/180) atmosphere.wind[:, 1].*cos.(atmosphere.wind[:, 2].*pi/180)]'
+    Δpos_meters = observations.detector.exptime .* [atmosphere.wind[:, 1].*sind.(atmosphere.wind[:, 2]) atmosphere.wind[:, 1].*cosd.(atmosphere.wind[:, 2])]'
     Δpos_pix = Δpos_meters ./ repeat(atmosphere.sampling_nyquist_mperpix', 2, 1)
     Δpos_pix_total = Δpos_pix .* (observations.nepochs - 1)
     atmosphere.positions = zeros(FTYPE, 2, observations.nepochs, atmosphere.nlayers, atmosphere.nλ)
@@ -218,10 +219,10 @@ end
     end
 end
 
-function calculate_atmosphere_parameters!(atmosphere, observations_full, masks_full, object, patches)
-    calculate_screen_size!(atmosphere, observations_full, object, patches)
-    calculate_pupil_positions!(atmosphere, observations_full)
-    calculate_layer_masks!(patches, atmosphere, observations_full, object, masks_full)
+function calculate_atmosphere_parameters!(atmosphere, observations_full, masks_full, object, patches; verb=true)
+    calculate_screen_size!(atmosphere, observations_full, object, patches, verb=verb)
+    calculate_pupil_positions!(atmosphere, observations_full, verb=verb)
+    calculate_layer_masks!(patches, atmosphere, observations_full, object, masks_full, verb=verb)
 end
 
 @views function create_phase_screens!(atmosphere, observations; verb=true)
@@ -250,7 +251,7 @@ end
     end
     FTYPE = gettype(atmosphere)
     scaleby_wavelength = atmosphere.λ_nyquist ./ atmosphere.λ
-    scaleby_height = layer_scale_factors(atmosphere.heights, object.height)
+    scaleby_height = layer_scale_factors(atmosphere.heights, object.range)
     buffer = zeros(FTYPE, atmosphere.dim, atmosphere.dim, Threads.nthreads())
     layer_mask = zeros(Bool, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ, Threads.nthreads())
     deextractors = create_patch_extractors_adjoint(patches, atmosphere, observations_full, object, scaleby_wavelength, scaleby_height)
@@ -295,7 +296,7 @@ function air_refractive_index_minus_one(λ; pressure=69.328, temperature=293.15,
     P = pressure * 7.50061683 # kPa -> mmHg
     T = temperature - 273.15 # K -> C
     W = H2O_pressure * 7.50061683 # kPa -> mmHg
-    sigma_squared = 1.0 / ((λ*1e-9) * 1e6)^2.0 # inverse wavenumber squared in micron^-2
+    sigma_squared = 1.0 / (λ * 1e6)^2.0 # inverse wavenumber squared in micron^-2
     n_minus_one = (64.328 + (29498.1 / (146.0 - sigma_squared))+ (255.4 / (41.0 - sigma_squared))) * 1e-6
     n_minus_one *= P * (1.0 + (1.049 - 0.0157 * T) * 1e-6 * P) / (720.883 * (1.0 + 0.003661 * T))
     n_minus_one -= (0.0624 - 0.000680 * sigma_squared)/(1.0 + 0.003661 * T) * W * 1e-6
@@ -324,7 +325,7 @@ function get_refraction(λ, ζ; pressure=69.328, temperature=293.15, H2O_pressur
     # n_squared = (nm1 + 1)**2
     # r0 = (n_squared - 1.0) / (2.0 * n_squared)
     r0 = nm1 * (nm1+2) / 2.0 / (nm1^2 + 2*nm1 + 1)
-    return r0 * tan(ζ*pi/180)
+    return r0 * tand(ζ)
 end
 
 function refraction_at_layer_pix(atmosphere, observations)
@@ -334,7 +335,7 @@ function refraction_at_layer_pix(atmosphere, observations)
     for w=1:atmosphere.nλ
         θλ = get_refraction(atmosphere.λ[w], observations.ζ)
         for l=1:atmosphere.nlayers
-            Δpix[l, w] = ((θλ - θref) * (atmosphere.heights[l] * 1000)) / atmosphere.sampling_nyquist_mperpix[l]
+            Δpix[l, w] = ((θλ - θref) * atmosphere.heights[l]) / atmosphere.sampling_nyquist_mperpix[l]
         end
     end
 
@@ -359,7 +360,7 @@ end
     ny = nx'
     k = 2pi / λ
     nlayers = length(heights)
-    Δh = (heights[2:end] .- heights[1:nlayers-1]) .* 1000
+    Δh = (heights[2:end] .- heights[1:nlayers-1])
     α = heights ./ heights[nlayers]
     δ = (1 .- α) .* delta1 .+ α .* deltan
     m = δ[2:nlayers] ./ δ[1:nlayers-1]
@@ -407,13 +408,12 @@ function CN2_huffnagel_valley_generalized(h; A=1.7e-14, hA=100, B=2.7e-16, hB=15
 end
 
 function wind_profile_greenwood(h, ζ)
-    v = 8 .+ 30 .* exp.(-( (h .* cos(ζ*pi/180) .- 9.4) ./ 4.8 ).^2 )
+    v = 8 .+ 30 .* exp.(-( (h .* cosd(ζ) .- 9.4) ./ 4.8 ).^2 )
     return v
 end
 
-function wind_profile_roberts2011(h, ζ; A₀=5.0, A₁=29.6, A₂=12.335, A₃=3.405)#, site, month)
-    # A₀, A₁, A₂, A₃ = get_roberts2011_coeffs(site, month)
-    v = A₀ .+ A₁ .* exp.( -( (h .* cos(ζ*pi/180) .- A₂) ./ A₃ ).^2 )
+function wind_profile_roberts2011(h, ζ; A₀=5.0, A₁=29.6, A₂=12335.0, A₃=3405.0)
+    v = A₀ .+ A₁ .* exp.( -( (h .* cosd(ζ) .- A₂) ./ A₃ ).^2 )
     return v
 end
 
@@ -441,16 +441,15 @@ end
 end
 
 function composite_r0_to_layers(r0_target, heights, λ, ζ)
-    heights = max.(0.01, heights)
-    heights .*= 1000
+    heights = max.(10, heights)
     Cn2 = CN2_huffnagel_valley_generalized.(heights)
-    k = 2pi / (λ .* 1e-9)
-    r0(x) = (0.423 * k^2 * sec(ζ*pi/180) * sum(heights .* x))^(-3/5)
+    k = 2pi / λ
+    r0(x) = (0.423 * k^2 * secd(ζ) * sum(heights .* x))^(-3/5)
     diff = (r0(Cn2) - r0_target) / r0_target
     while abs(diff) > 1e-3
         Cn2 .+= 0.001 .* sign(diff) .* Cn2
         diff = (r0(Cn2) - r0_target) / r0_target
     end
-    r0_layers = (0.423 .* k^2 * sec(ζ*pi/180) .* Cn2 .* heights).^(-3/5)
+    r0_layers = (0.423 .* k^2 * secd(ζ) .* Cn2 .* heights).^(-3/5)
     return r0_layers
 end

@@ -56,6 +56,7 @@ end
             image_temp_big = helpers.image_temp_big[:, :, tid]  # Buffer to hold the full-size spectral image
             image_temp_small = helpers.image_temp_small[dd][:, :, tid]  # Buffer to hold the downsampled spectral image
             ##
+            fill!(psfs, zero(FTYPE))
             for n=1:observation.nsubaps  # Loop through all subaps
                 ## Aliases for subap-dependent parameters
                 subap_image = observation.model_images[:, :, n, t]  # Model image for each subap at each time
@@ -63,8 +64,8 @@ end
                 ##
                 create_image!(subap_image, image_temp_small, image_temp_big, psfs, psf_temp, scale_psfs, x, patches.w, object_patch, subap_mask, A, P, p, refraction, iffts, convs, atmosphere.transmission, optics.response, ϕ_composite, ϕ_static, ϕ_slices, atmosphere.phase, smoothing, atmosphere.nlayers, extractor, atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, reconstruction.nλ, reconstruction.nλint, reconstruction.Δλ)
                 observation.model_images[:, :, n, t] .+= object.background_flux ./ observation.dim^2  # Add the background, which is specified per image, so scale by the number of pixels first
-                ω[:, :, tid] .= reconstruction.weight_function(observation.entropy[n, t], observation.model_images[:, :, n, t], observation.detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
-                helpers.ϵ_threads[tid] += loglikelihood_gaussian(r[:, :, tid], observation.images[:, :, n, t], observation.model_images[:, :, n, t], ω[:, :, tid])  # Calculate the gaussian likelihood for the calculated model image and data frame
+                ω[:, :, tid] .= reconstruction.weight_function(observation.entropy[n, t], subap_image, observation.detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
+                helpers.ϵ_threads[tid] += loglikelihood_gaussian(r[:, :, tid], observation.images[:, :, n, t], subap_image, ω[:, :, tid])  # Calculate the gaussian likelihood for the calculated model image and data frame
                 reconstruction.gradient_object(helpers.g_threads_obj[:, :, :, tid], r[:, :, tid], ω[:, :, tid], image_temp_big, psfs, observation.entropy[n, t], patches.w, patches.npatches, reconstruction.Δλ, reconstruction.nλ, corrs, helpers.containers_builddim_real[:, :, tid])
             end
         end
@@ -292,15 +293,16 @@ end
             image_temp_big = helpers.image_temp_big[:, :, tid]  # Buffer to hold the full-size spectral image
             image_temp_small = helpers.image_temp_small[dd][:, :, tid]  # Buffer to hold the downsampled spectral image
             ##
+            fill!(psfs, zero(FTYPE))
             for n=1:observation.nsubaps  # Loop through all subaps
                 ## Aliases for subap-dependent parameters
-                subap_image = observation.model_images[:, :, n, t]  # Model image for each subap at each time
+                subap_model_image = observation.model_images[:, :, n, t]  # Model image for each subap at each time
                 subap_mask = mask.masks[:, :, n, :]  # Mask for each subap at all wavelengths
                 ##
-                create_image!(subap_image, image_temp_small, image_temp_big, psfs, psf_temp, scale_psfs, object.object, patches.w, object_patch, subap_mask, A, P, p, refraction, iffts, convs, atmosphere.transmission, optics.response, ϕ_composite, ϕ_static, ϕ_slices, x, smoothing, atmosphere.nlayers, extractor, atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, reconstruction.nλ, reconstruction.nλint, reconstruction.Δλ)
-                observation.model_images[:, :, n, t] .+= object.background_flux ./ observation.dim^2  # Add the background, which is specified per image, so scale by the number of pixels first
-                ω[:, :, tid] .= reconstruction.weight_function(observation.entropy[n, t], observation.model_images[:, :, n, t], observation.detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
-                helpers.ϵ_threads[tid] += loglikelihood_gaussian(r[:, :, tid], observation.images[:, :, n, t], observation.model_images[:, :, n, t], ω[:, :, tid])  # Calculate the gaussian likelihood for the calculated model image and data frame
+                create_image!(subap_model_image, image_temp_small, image_temp_big, psfs, psf_temp, scale_psfs, object.object, patches.w, object_patch, subap_mask, A, P, p, refraction, iffts, convs, atmosphere.transmission, optics.response, ϕ_composite, ϕ_static, ϕ_slices, x, smoothing, atmosphere.nlayers, extractor, atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, reconstruction.nλ, reconstruction.nλint, reconstruction.Δλ)
+                subap_model_image .+= object.background_flux ./ observation.dim^2  # Add the background, which is specified per image, so scale by the number of pixels first
+                ω[:, :, tid] .= reconstruction.weight_function(observation.entropy[n, t], subap_model_image, observation.detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
+                helpers.ϵ_threads[tid] += loglikelihood_gaussian(r[:, :, tid], observation.images[:, :, n, t], subap_model_image, ω[:, :, tid])  # Calculate the gaussian likelihood for the calculated model image and data frame
                 reconstruction.gradient_wf(helpers.g_threads_ϕ[:, :, :, :, tid], r[:, :, tid], ω[:, :, tid], P, p, helpers.c[:, :, tid], helpers.d[:, :, tid], helpers.d2[:, :, tid], reconstruction.λtotal, reconstruction.Δλtotal, reconstruction.nλ, reconstruction.nλint, optics.response, atmosphere.transmission, atmosphere.nlayers, helpers.o_corr[:, :, tid], observation.entropy[n, t], patches.npatches, unsmoothing, refraction_adj, extractor_adj, iffts, helpers.containers_builddim_real[:, :, tid], helpers.containers_sdim_real[:, :, tid])
             end
         end

@@ -27,7 +27,7 @@ mutable struct ReconstructionFigures
     end
 end
 
-function plot_object(object; show=true, write=false, filename="", label="Flux [ph/nm]")
+function plot_object(object; show=true, write=false, filename="", label="Flux [ph/m]")
     fig = Figure(size=(600, 600))
     ax = Axis(fig[1, 1], titlesize=18, aspect=DataAspect())
     ax.title = "Object [sum]"
@@ -69,7 +69,7 @@ function plot_opd(atmosphere; show=false, write=false, filename="", label="OPD [
     return fig, ax, obs
 end
 
-function plot_phase(atmosphere; show=false, write=false, filename="", label="Phase [rad] @ $(round(atmosphere.λ[1], digits=1)) nm")
+function plot_phase(atmosphere; show=false, write=false, filename="", label="Phase [rad] @ $(round(atmosphere.λ[1]*1e9, digits=1)) nm")
     fig = Figure(size=(400*atmosphere.nlayers, 400))
     ax = [Axis(fig[1, 2*l], titlesize=18, aspect=DataAspect()) for l=1:atmosphere.nlayers]
     [ax[l].title = "Layer $(l) - $(label)" for l=1:atmosphere.nlayers]
@@ -90,7 +90,7 @@ function plot_phase(atmosphere; show=false, write=false, filename="", label="Pha
     return fig, ax, obs
 end
 
-function plot_static_phase(observations; show=false, write=false, filename="", label="Phase [rad] @ $(round(observations[1].detector.λ[1], digits=1)) nm")
+function plot_static_phase(observations; show=false, write=false, filename="", label="Phase [rad] @ $(round(observations[1].detector.λ[1] * 1e9, digits=1)) nm")
     ndatasets = length(observations)
     fig = Figure(size=(400*ndatasets, 400))
     ax = [Axis(fig[1, 2*dd], titlesize=18, aspect=DataAspect()) for dd=1:ndatasets]
@@ -123,7 +123,7 @@ function plot_heights(atmosphere; heights=[], ϵ=[], show=false)
     base10exp = (length(ϵ_real)==0) ? 0 : floor(Int64, log10(minimum(ϵ_real)))
     ylabel = rich("Criterion [×10", superscript(string(base10exp)) , "]")
     fig = Figure(size=(600, 600))
-    ax = Axis(fig[1, 1], xlabel="Height [km]", ylabel=ylabel, xlabelsize=18, xticklabelsize=16, ylabelsize=18, yticklabelsize=16)
+    ax = Axis(fig[1, 1], xlabel="Height [m]", ylabel=ylabel, xlabelsize=18, xticklabelsize=16, ylabelsize=18, yticklabelsize=16)
     heights_obs = [Observable(heights[l]) for l=1:atmosphere.nlayers-1]
     ϵ_obs = [Observable(ϵ[l] ./ 10^base10exp) for l=1:atmosphere.nlayers-1]
     for l=1:atmosphere.nlayers-1

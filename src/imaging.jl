@@ -1,7 +1,16 @@
 using Distributions
+using ProgressMeter
 using TwoDimensional
 using LinearInterpolators
 
+
+function convert_image(out::AbstractMatrix{<:AbstractFloat}, in::AbstractMatrix{<:AbstractFloat})
+    out .= in
+end
+
+function convert_image(out::AbstractMatrix{<:Integer}, in::AbstractMatrix{<:AbstractFloat})
+    out .= floor.(eltype(out), in)
+end
 
 function create_extractor_operator(position, screen_dim, output_dim, scaleby_height, scaleby_wavelength; FTYPE=FTYPE)
     kernel = LinearSpline(FTYPE)
@@ -56,40 +65,11 @@ function create_refraction_adjoint(λ, λ_ref, ζ, pixscale, build_dim; FTYPE=Fl
     return refraction
 end
 
-function pupil2psf(mask, λ, λ_ref, ζ, A, ϕ, build_dim, response, transmission, scale_psf, pixscale; FTYPE=Float64)
-    P = zeros(FTYPE, build_dim, build_dim)
-    p = zeros(Complex{FTYPE}, build_dim, build_dim)
-    psf = zeros(FTYPE, build_dim, build_dim)
-    psf_temp = zeros(FTYPE, build_dim, build_dim)
-    refraction = create_refraction_operator(λ, λ_ref, ζ, pixscale, build_dim; FTYPE=FTYPE)
-    pupil2psf!(psf, psf_temp, mask, P, p, A, ϕ, response, transmission, scale_psf, FTYPE(build_dim), refraction)
-    return psf
-end
-
-function pupil2psf!(psf, psf_temp, mask, P, p, A, ϕ, response, transmission, scale_psf, scale_ifft::AbstractFloat, refraction)
-    P .= mask .* scale_psf .* A .* cis.(ϕ)
-    p .= ift(P) .* scale_ifft
-    psf_temp .= transmission .* response .* abs2.(p)
-    mul!(psf, refraction, psf_temp)
-end
-
 function pupil2psf!(psf, psf_temp, mask, P, p, A, ϕ, response, transmission, scale_psf, ifft_prealloc!::Function, refraction)
     P .= mask .* scale_psf .* A .* cis.(ϕ)
     ifft_prealloc!(p, P)
     psf_temp .= transmission .* response .* abs2.(p)
-    mul!(psf, refraction, psf_temp)
-end
-
-@views function poly2broadbandpsfs(patches, observations, Δλ, nλ)
-    FTYPE = gettype(observations[1])
-    ndatasets = length(observations)
-    patches.broadband_psfs = Vector{Array{FTYPE, 5}}(undef, ndatasets)
-    for dd=1:ndatasets
-        observation = observations[dd]
-        psfs = patches.psfs[dd]
-        patches.broadband_psfs[dd] = zeros(FTYPE, observation.dim, observation.dim, patches.npatches, observation.nsubaps, observation.nepochs)
-        poly2broadbandpsfs!(patches.broadband_psfs[dd], psfs, patches, observation, Δλ, nλ)
-    end
+    mul!(psf, refraction, psf_temp)  
 end
 
 @views function poly2broadbandpsfs!(broadband_psfs, psfs, patches, observations, Δλ, nλ)
@@ -104,66 +84,10 @@ end
     end
 end
 
-function create_monochromatic_image(object, psf, dim)
-    FTYPE = gettype(object)
-    image_big = zeros(FTYPE, size(object))
-    image_small = zeros(FTYPE, dim, dim)
-    create_monochromatic_image!(image_small, image_big, object, psf)
-    return image_small
-end
-
-function create_monochromatic_image!(image_small, image_big, object::AbstractMatrix{<:AbstractFloat}, psf)
-    image_big .= conv_psf(object, psf)
+function create_monochromatic_image!(image_small, image_big, object::AbstractMatrix{<:AbstractFloat}, psf, conv!::Function)
+    conv!(image_big, object, psf)
     block_reduce!(image_small, image_big)
 end
-
-function create_monochromatic_image!(image_small, image_big, object::AbstractMatrix{<:AbstractFloat}, psf, conv_prealloc)
-    conv_prealloc(image_big, object, psf)
-    block_reduce!(image_small, image_big)
-end
-
-function create_monochromatic_image!(image_small, image_big, o_conv::Function, psf)
-    image_big .= o_conv(psf)
-    block_reduce!(image_small, image_big)
-end
-
-# function create_polychromatic_image(object, psfs, λ, Δλ, dim; FTYPE=Float64)
-#     build_dim = size(psfs, 1)
-#     image = zeros(FTYPE, build_dim, build_dim)
-#     image_small = zeros(FTYPE, dim, dim)
-#     image_big = zeros(FTYPE, build_dim, build_dim)
-#     create_polychromatic_image!(image, image_small, image_big, object, psfs, λ, Δλ)
-#     return image
-# end
-
-# @views function create_polychromatic_image!(image, image_small::AbstractArray{<:AbstractFloat, 2}, image_big, o_conv::AbstractVector{<:Function}, psfs, λ, Δλ)
-#     nλ = length(λ)
-#     for w=1:nλ
-#         create_monochromatic_image!(image_small, image_big, o_conv[w], psfs[:, :, w])
-#         image .+= image_small
-#     end
-#     image .*= Δλ
-# end
-
-# @views function create_polychromatic_image!(image, image_small::AbstractMatrix{<:AbstractFloat}, image_big, ω, object_patch, object::AbstractArray{<:AbstractFloat, 3}, psfs, λ, Δλ)
-#     nλ = length(λ)
-#     for w=1:nλ
-#         object_patch .= ω .* object[:, :, w]
-#         create_monochromatic_image!(image_small, image_big, object_patch, psfs[:, :, w])
-#         image .+= image_small
-#     end
-#     image .*= Δλ
-# end
-
-# @views function create_polychromatic_image!(image, image_small::AbstractArray{<:AbstractFloat, 3}, image_big, ω, object_patch, object::AbstractArray{<:AbstractFloat, 3}, psfs, λ, Δλ)
-#     nλ = length(λ)
-#     for w=1:nλ
-#         object_patch .= ω .* object[:, :, w]
-#         create_monochromatic_image!(image_small[:, :, w], image_big, object_patch, psfs[:, :, w])
-#         image .+= image_small[:, :, w]
-#     end
-#     image .*= Δλ
-# end
 
 function add_noise!(image, rn, poisson::Bool; FTYPE=Float64)
     if poisson == true
@@ -206,10 +130,8 @@ end
 end
 
 @views function create_images(patches, observations, atmosphere, masks, object; build_dim=object.dim, noise=false, verb=true)
-    ndatasets = length(observations)
     FTYPE = gettype(patches)
     nthreads = Threads.nthreads()
-    ndatasets = length(observations)
     psfs = zeros(FTYPE, build_dim, build_dim, nthreads)
     psf_temp = zeros(FTYPE, build_dim, build_dim, nthreads)
     image_big_temp = zeros(FTYPE, build_dim, build_dim, nthreads)
@@ -222,27 +144,25 @@ end
     iffts = [setup_ifft(Complex{FTYPE}, build_dim)[1] for tid=1:Threads.nthreads()]
     convs = [setup_conv(FTYPE, build_dim) for tid=1:Threads.nthreads()]
 
-    scaleby_height = layer_scale_factors(atmosphere.heights, object.height)
+    scaleby_height = layer_scale_factors(atmosphere.heights, object.range)
     scaleby_wavelength = atmosphere.λ_nyquist ./ atmosphere.λ
-    for dd=1:ndatasets
-        if verb == true
-            println("Creating $(observations[dd].dim)×$(observations[dd].dim) images for $(observations[dd].nepochs) times and $(observations[dd].nsubaps) subaps using eff model")
-        end
-        DTYPE = gettypes(observations[dd].detector)[end]
-        image_small_temp = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
-        refraction = [create_refraction_operator(atmosphere.λ[w], atmosphere.λ_ref, observations[dd].ζ, observations[dd].detector.pixscale, build_dim, FTYPE=FTYPE) for w=1:atmosphere.nλ]
-        extractors = create_patch_extractors(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
-        images_float = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
-        observations[dd].images = zeros(DTYPE, observations[dd].dim, observations[dd].dim, observations[dd].nsubaps, observations[dd].nepochs)
-        create_images!(patches, observations[dd], atmosphere, masks[dd], object, images_float, image_small_temp, image_big_temp, psfs, psf_temp, object_patch, A, P, p, refraction, iffts, convs, ϕ_composite, ϕ_slices, extractors, noise=noise)
+    if verb == true
+        println("Creating $(observations.dim)×$(observations.dim) images for $(observations.nepochs) times and $(observations.nsubaps) subaps")
     end
+    DTYPE = gettypes(observations.detector)[end]
+    image_small_temp = zeros(FTYPE, observations.dim, observations.dim, nthreads)
+    refraction = [create_refraction_operator(atmosphere.λ[w], atmosphere.λ_ref, observations.ζ, observations.detector.pixscale, build_dim, FTYPE=FTYPE) for w=1:atmosphere.nλ]
+    extractors = create_patch_extractors(patches, atmosphere, observations, object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
+    images_float = zeros(FTYPE, observations.dim, observations.dim, nthreads)
+    observations.images = zeros(DTYPE, observations.dim, observations.dim, observations.nsubaps, observations.nepochs)
+    create_images!(patches, observations, atmosphere, masks, object, images_float, image_small_temp, image_big_temp, psfs, psf_temp, object_patch, A, P, p, refraction, iffts, convs, ϕ_composite, ϕ_slices, extractors, noise=noise)
 end
 
 @views function create_images!(patches, observations, atmosphere, masks, object, images_float, image_small_temp, image_big_temp, psf, psf_temp, object_patch, A, P, p, refraction, iffts, convs, ϕ_composite, ϕ_slices, extractors; noise=false)
     FTYPE = gettype(observations)
-    DTYPE = gettypes(observations.detector)[end]
     nλint = 1
     smoothing!(out, in) = nothing
+    prog = Progress(observations.nepochs*observations.nsubaps)
     Threads.@threads :static for t=1:observations.nepochs
         tid = Threads.threadid()
         for n=1:observations.nsubaps
@@ -254,14 +174,16 @@ end
             end
             images_float[:, :, tid] .= min.(images_float[:, :, tid], observations.detector.saturation)
             images_float[:, :, tid] ./= observations.detector.gain  # Converts e⁻ to counts
-            observations.images[:, :, n, t] .= floor.(DTYPE, images_float[:, :, tid]) # Converts floating-point counts to integer at bitdepth of detector
+            convert_image(observations.images[:, :, n, t], images_float[:, :, tid]) # Converts floating-point counts to integer at bitdepth of detector
+            next!(prog)
         end
     end
+    finish!(prog)
 end
 
 @views function create_image!(image, image_small_temp, image_big_temp, psf::AbstractMatrix{<:AbstractFloat}, psf_temp, scale_psfs, object, patch_weight, object_patch, masks, A, P::AbstractMatrix{<:Complex{<:AbstractFloat}}, p::AbstractMatrix{<:Complex{<:AbstractFloat}}, refraction, iffts, convs, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smoothing!, nlayers, extractors, sampling_nyquist_mperpix, heights, npatches, nλ, nλint, Δλ)
+    fill!(image, zero(eltype(image)))
     for np=1:npatches
-        psf .*= 0
         for w₁=1:nλ
             for w₂=1:nλint 
                 w = (w₁-1)*nλint + w₂
@@ -272,26 +194,25 @@ end
     image .*= Δλ
 end
 
-@views function create_image!(image, image_small_temp, image_big_temp, psfs::AbstractArray{<:AbstractFloat, 4}, psf_temp, scale_psfs, object, patch_weight, object_patch, masks, A, P::AbstractArray{<:Complex{<:AbstractFloat}, 4}, p::AbstractArray{<:Complex{<:AbstractFloat}, 4}, refraction, iffts, convs, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smoothing!, nlayers, extractors, sampling_nyquist_mperpix, heights, npatches, nλ, nλint, Δλ)
+@views function create_image!(image, image_small_temp, image_big_temp, psfs::AbstractArray{<:AbstractFloat, 4}, psf_temp, scale_psfs, object, patch_weight, object_patch, masks, A, P::AbstractArray{<:Complex{<:AbstractFloat}, 4}, p::AbstractArray{<:Complex{<:AbstractFloat}, 4}, refraction, iffts, conv!, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smoothing!, nlayers, extractors, sampling_nyquist_mperpix, heights, npatches, nλ, nλint, Δλ)
     for np=1:npatches
         for w₁=1:nλ
             for w₂=1:nλint 
                 w = (w₁-1)*nλint + w₂
-                create_patch_spectral_image!(image, image_small_temp, image_big_temp, psfs[:, :, np, w], psf_temp, scale_psfs[w], object[:, :, w], patch_weight[:, :, np], object_patch, masks[:, :, w], A, P[:, :, np, w], p[:, :, np, w], refraction[w], iffts, convs, atmosphere_transmission[w], optics_response[w], ϕ_composite, phase_static[:, :, w], ϕ_slices, ϕ_full[:, :, :, w], smoothing!, nlayers, extractors[np, :, w], sampling_nyquist_mperpix, heights, nλint)
+                create_patch_spectral_image!(image, image_small_temp, image_big_temp, psfs[:, :, np, w], psf_temp, scale_psfs[w], object[:, :, w], patch_weight[:, :, np], object_patch, masks[:, :, w], A, P[:, :, np, w], p[:, :, np, w], refraction[w], iffts, conv!, atmosphere_transmission[w], optics_response[w], ϕ_composite, phase_static[:, :, w], ϕ_slices, ϕ_full[:, :, :, w], smoothing!, nlayers, extractors[np, :, w], sampling_nyquist_mperpix, heights, nλint)          
             end
         end
     end
     image .*= Δλ
 end
 
-@views function create_patch_spectral_image!(image, image_small_temp, image_big_temp, psf, psf_temp, scale_psfs, object, patch_weight, object_patch, masks, A, P, p, refraction, iffts, convs, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smoothing!, nlayers, extractors, sampling_nyquist_mperpix, heights, nλint)
+@views function create_patch_spectral_image!(image, image_small_temp, image_big_temp, psf, psf_temp, scale_psfs, object, patch_weight, object_patch, masks, A, P, p, refraction, iffts, conv!, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smoothing!, nlayers, extractors, sampling_nyquist_mperpix, heights, nλint)
     calculate_composite_pupil!(A, ϕ_composite, ϕ_slices, ϕ_full, nlayers, extractors, masks, sampling_nyquist_mperpix, heights)
-    ϕ_composite .+= phase_static
-    # ϕ_composite .*= masks
     smoothing!(ϕ_composite, ϕ_composite)
+    ϕ_composite .+= phase_static
     pupil2psf!(psf_temp, psf_temp, masks, P, p, A, ϕ_composite, optics_response, atmosphere_transmission, scale_psfs, iffts, refraction)
     psf .= psf_temp ./ nλint
     object_patch .= patch_weight .* object
-    create_monochromatic_image!(image_small_temp, image_big_temp, object_patch, psf, convs)
+    create_monochromatic_image!(image_small_temp, image_big_temp, object_patch, psf, conv!)
     image .+= image_small_temp
 end

@@ -5,13 +5,24 @@ using DelimitedFiles
 using ZernikePolynomials
 import Interpolations: LinearInterpolation, Line
 
-
 function gettype(T)
     return typeof(T).parameters[1]
 end
 
 function gettypes(T)
     return typeof(T).parameters
+end
+
+function create_header(λ, units)
+    λmin = minimum(λ)
+    λmax = maximum(λ)
+    nλ = length(λ)
+    header = (
+        ["WAVELENGTH_START", "WAVELENGTH_END", "WAVELENGTH_STEPS", "BUNIT"], 
+        [λmin, λmax, nλ, units],
+        ["Shortest wavelength of mask [m]", "Largest wavelength of mask [m]", "Number of wavelength steps", "Image Units"]
+    )
+    return header
 end
 
 function writefits(x, filename; verb=true, header=nothing)
@@ -72,9 +83,10 @@ end
 
 function readqe(filename; λ=[])
     λraw, qe_raw = readfile(filename)
+    λraw .*= 1e-9
     if λ != []
         itp = LinearInterpolation(λraw, qe_raw, extrapolation_bc=Line())
-        qe = itp(λ)
+        qe = max.(0.0, itp(λ))
     else
         λ, qe = λraw, qe_raw
     end
@@ -267,38 +279,42 @@ end
 
 function vega_spectrum(; λ=[])
     file = "data/alpha_lyr_stis_011.fits"
-    λ, flux = readspectrum(file, λ=λ)
-    return λ, flux
+    λ₀, spectral_irradiance = readspectrum(file)  # erg/s/cm^2/Å
+    λ₀ .*= 1e-10  # convert Å to m
+    spectral_irradiance .*= 1e-7  # convert erg/s to W [W/cm^2/Å]
+    spectral_irradiance .*= 1e4  # convert cm^2 to m^2 [W/m^2/Å]
+    spectral_irradiance .*= 1e10  # convert Å to m [W/m^2/m]
+    if λ == []
+        λ = λ₀
+    else
+        spectral_irradiance = interpolate1d(λ₀, spectral_irradiance, λ)
+    end
+    return λ, spectral_irradiance
 end
 
 function solar_spectrum(; λ=[])
     file = "data/sun_reference_stis_002.fits"
-    λ, flux = readspectrum(file, λ=λ)
-    return λ, flux
-end
-
-function readspectrum(file; λ=[])
-    h = 6.626196e-27  # erg⋅s
-    c = 2.997924562e17  # nm/s
-
-    λ₀ = read(FITS(file)[2], "WAVELENGTH")  # Å
-    λ₀ ./= 10  # convert to nm
-    flux = read(FITS(file)[2], "FLUX")  # erg/s/cm^2/Å
-    flux ./= h*c ./ λ₀  # convert erg/s to ph/s [ph/s/cm^2/Å]
-    flux .*= 1e4  # convert cm^2 to m^2 [ph/s/m^2/Å]
-    flux .*= 10  # convert Å to nm [ph/s/m^2/nm]
-
+    λ₀, spectral_irradiance = readspectrum(file)  # Å, mW/m^2/Å
+    λ₀ .*= 1e-10  # convert Å to m
+    spectral_irradiance .*= 1e-3  # convert mW to W [W/m^2/Å]
+    spectral_irradiance .*= 1e10  # convert Å to m [W/m^2/m]
     if λ == []
         λ = λ₀
     else
-        flux = interpolate1d(λ₀, flux, λ)
+        spectral_irradiance = interpolate1d(λ₀, spectral_irradiance, λ)
     end
 
-    return λ, flux
+    return λ, spectral_irradiance
+end
+
+function readspectrum(file)
+    λ₀ = read(FITS(file)[2], "WAVELENGTH")
+    spectral_irradiance = read(FITS(file)[2], "FLUX")
+    return λ₀, spectral_irradiance
 end
 
 function ft(x)
-    return ifftshift(fft(ifftshft(x)))
+    return fftshift(fft(ifftshft(x)))
 end
 
 function ift(x)
@@ -568,6 +584,7 @@ end
 
 function readtransmission(filename; resolution=Inf, λ=[])
     λtransmission, transmission = readfile(filename)
+    λtransmission .*= 1e-9
     # if resolution != Inf
     #     transmission .= smooth_to_resolution(λtransmission, transmission, resolution)
     # end

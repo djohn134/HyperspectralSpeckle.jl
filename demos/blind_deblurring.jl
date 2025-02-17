@@ -7,7 +7,7 @@ using Statistics;
 FTYPE = Float32;
 # folder = "/home/dan/Desktop/JASS_2024/tests";
 folder = "data/test"
-id = "_mixednoise"
+id = ""
 verb = true
 plot = true
 ###########################################
@@ -18,9 +18,9 @@ wfs_dim = 64
 nsubaps_side = 6
 nλ = 1
 nλint = 1
-λ_ref = 500.0
-λmin = λ_nyquist = 500.0
-λmax = 500.0
+λ_ref = 500.0e-9
+λmin = λ_nyquist = 500.0e-9
+λmax = 500.0e-9
 λ = (nλ == 1) ? [mean([λmax, λmin])] : collect(range(λmin, stop=λmax, length=nλ))
 Δλ = (nλ == 1) ? 1.0 : (λmax - λmin) / (nλ - 1)
 resolution = mean(λ) / Δλ
@@ -32,16 +32,17 @@ isoplanatic = true
 patch_overlap = 0.5
 patch_dim = 64
 ###### Create Anisoplanatic Patches #######
-patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FTYPE=FTYPE)
+patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FTYPE=FTYPE, verb=verb)
 ###########################################
 
 ### Detector & Observations Parameters ####
 D = 3.6  # m
-fov = 5.0
+fov = 50.0
 pixscale_full = fov / image_dim
 pixscale_wfs = pixscale_full .* nsubaps_side
 qefile = "data/qe/prime-95b_qe.dat"
 ~, qe = readqe(qefile, λ=λ)
+# qe = ones(FTYPE, nλ)
 rn = 2.0
 exptime = 5e-3
 ζ = 0.0
@@ -50,6 +51,7 @@ filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
 # filter = OpticalElement(λ=[0.0, 10000.0], response=[1.0, 1.0], FTYPE=FTYPE)
 beamsplitter = OpticalElement(λ=[0.0, 10000.0], response=[0.5, 0.5], FTYPE=FTYPE)
 optics_full = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
+# optics_full = OpticalSystem([filter], λ, verb=verb, FTYPE=FTYPE)
 ######### Create Full-Ap Detector #########
 detector_full = Detector(
     qe=qe,
@@ -62,9 +64,6 @@ detector_full = Detector(
     FTYPE=FTYPE
 )
 ### Create Full-Ap Observations object ####
-# ϕ_static_full = repeat(masks_full.masks[:, :, 1, 1] .* create_zernike_screen(image_dim, image_dim÷4, 4, 4.0, FTYPE=FTYPE), 1, 1, nλ)
-# writefits(ϕ_static_full, "$(folder)/defocus4.fits")
-# ϕ_static_full = readfits("$(folder)/defocus4.fits")
 datafile = "$(folder)/Dr0_20_ISH1x1_images.fits"
 images_full, ~, ~, image_dim = readimages(datafile, FTYPE=FTYPE)
 ϕ_static_full = zeros(FTYPE, image_dim, image_dim, nλ)
@@ -106,7 +105,7 @@ observations_wfs = Observations(
     FTYPE=FTYPE
 )
 observations = [observations_wfs, observations_full]
-background_flux = 0*mean(fit_background.(observations))
+background_flux = 0.0 * mean(fit_background(observations_full))
 ###########################################
 
 ########## Create Full-Ap Masks ###########
@@ -124,6 +123,7 @@ masks_wfs = Masks(
     λ,
     nsubaps_side=nsubaps_side,
     λ_nyquist=λ_nyquist, 
+    verb=verb,
     FTYPE=FTYPE
 )
 nsubaps = masks_wfs.nsubaps
@@ -132,36 +132,36 @@ masks = [masks_wfs, masks_full]
 ###########################################
 
 ############ Object Parameters ############
-object_height = 515.0  # km
+object_range = 300.0e3  # km
 ############## Create object ##############
 # object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background_flux/observations_full.dim^2, 0)
 # object_arr = repeat(object_arr, 1, 1, nλ)
 # object_arr ./= sum(object_arr)
 # object_arr .*= mean(sum(observations_full.images, dims=(1, 2, 3))) - background_flux
-object_arr = readfits("$(folder)/object_recon_mixednoise.fits")
+object_arr = readfits("$(folder)/object_recon.fits")
 # object_arr = readfits("$(folder)/object_truth.fits")
 # object_arr = zeros(FTYPE, image_dim, image_dim, nλ)
+~, spectrum = solar_spectrum(λ=λ)
 object = Object(
     object_arr,
     λ=λ,
-    height=object_height, 
+    object_range=object_range, 
     fov=fov,
     dim=observations_full.dim,
     background_flux=background_flux,
-    spectrum=ones(nλ),
+    spectrum=spectrum,
     scaled=true,
-    FTYPE=FTYPE
+    FTYPE=FTYPE,
+    verb=verb
 )
 ###########################################
 
 
 ########## Atmosphere Parameters ##########
-heights = [0.0, 7.0, 12.5]
-# heights = [0.0]
+heights = [0.0, 7000.0, 12500.0]
 wind_speed = wind_profile_roberts2011(heights, ζ)
-# heights .*= 0.0
+heights .*= 0.0
 wind_direction = [45.0, 125.0, 135.0]
-# wind_direction = [45.0]
 wind = [wind_speed wind_direction]
 nlayers = length(heights)
 scaleby_wavelength = λ_nyquist ./ λ
@@ -183,11 +183,12 @@ atmosphere = Atmosphere(
     λ_nyquist=λ_nyquist,
     λ_ref=λ_ref,
     create_screens=false,
-    FTYPE=FTYPE
+    FTYPE=FTYPE,
+    verb=verb
 )
 ######### Set phase screens start #########
 # atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
-atmosphere.phase = readfits("$(folder)/phase_recon_mixednoise.fits")
+atmosphere.phase = readfits("$(folder)/phase_recon.fits")
 ###########################################
 
 ######### Reconstruction Object ###########
@@ -206,12 +207,9 @@ reconstruction = Reconstruction(
     wavefront_parameter=:phase,
     minimization_scheme=:mle,
     noise_model=:mixed,
-    maxeval=Dict("wf"=>1000, "object"=>10000),
+    maxeval=Dict("wf"=>1000, "object"=>1000),
     smoothing=true,
     fwhm_schedule=ConstantSchedule(0.5),
-    grtol=1e-9,
-    frtol=1e-9,
-    xrtol=1e-9,
     build_dim=image_dim,
     verb=verb,
     plot=plot,
@@ -219,11 +217,3 @@ reconstruction = Reconstruction(
 );
 reconstruct!(reconstruction, observations, atmosphere, object, masks, patches, write=true, folder=folder, id=id)
 ###########################################
-
-# ###########################################
-# ## Write isoplanatic phases and images ####
-# [writefits(observations[dd].model_images, "$(folder)/models_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_recon$(id).fits") for dd=1:reconstruction.ndatasets]
-# writefits(object.object, "$(folder)/object_recon$(id).fits")
-# writefits(getfield(atmosphere, reconstruction.wavefront_parameter), "$(folder)/$(symbol2str[reconstruction.wavefront_parameter])_recon$(id).fits")
-# writefile([reconstruction.ϵ], "$(folder)/recon$(id).dat")
-# ###########################################

@@ -1,7 +1,7 @@
 abstract type AbstractPatches end
 function Base.display(patches::T) where {T<:AbstractPatches}
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Anisoplanatic Patches\n"); print(Crayon(reset=true))
-    println("\tSize: $(patches.dim) pixels")
+    println("\tSize: $(patches.dim)×$(patches.dim) pixels")
     println("\tOverlap: $(patches.overlap)")
     println("\tNumber of patches: $(Int(sqrt(patches.npatches)))×$(Int(sqrt(patches.npatches))) patches")
 end
@@ -59,7 +59,7 @@ end
 function get_center!(center, field_point, pupil_position, object_sampling_arcsecperpix, atmosphere_sampling_nyquist_mperpix, height, scaleby_wavelength)
     center .= field_point  # Δx [pix in source plane]
     center .*= object_sampling_arcsecperpix / 206265  # Δx [radians]
-    center .*= height*1000  # Δx [meters in layer]
+    center .*= height  # Δx [meters in layer]
     center ./= atmosphere_sampling_nyquist_mperpix  # Δx  [pix in layer]
     center .*= scaleby_wavelength
     center .+= pupil_position
@@ -101,7 +101,7 @@ end
 
 @views function change_heights!(patches, atmosphere, object, observations_full, masks_full, heights; reconstruction=[], verb=true)
     if verb == true
-        println("Heights changed from $(atmosphere.heights) km to $(heights) km")
+        println("Heights changed from $(atmosphere.heights) m to $(heights) m")
     end
     
     FTYPE = gettype(observations_full)
@@ -113,38 +113,33 @@ end
 
     calculate_screen_size!(atmosphere, observations_full, object, patches, verb=verb)
     calculate_pupil_positions!(atmosphere, observations_full, verb=verb)
-    calculate_layer_masks_eff!(patches, atmosphere, observations_full, object, masks_full, verb=verb)
-    opd = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers)
-    # ϕ = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
+    calculate_layer_masks!(patches, atmosphere, observations_full, object, masks_full, verb=verb)
+    ϕ = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
 
     scaleby_height = original_sampling_nyquist_arcsecperpix ./ atmosphere.sampling_nyquist_arcsecperpix
+    kernel = LinearSpline(FTYPE)
+    transform = AffineTransform2D{FTYPE}()
+    screen_size = (Int64(original_dim), Int64(original_dim))
+    output_size = (Int64(atmosphere.dim), Int64(atmosphere.dim))
     for l=1:atmosphere.nlayers
-        kernel = LinearSpline(FTYPE)
-        transform = AffineTransform2D{FTYPE}()
-        screen_size = (Int64(original_dim), Int64(original_dim))
-        output_size = (Int64(atmosphere.dim), Int64(atmosphere.dim))
         full_transform = ((transform + (screen_size[1]÷2+1, screen_size[2]÷2+1)) * (1/scaleby_height[l])) - (atmosphere.dim÷2+1, atmosphere.dim÷2+1)
         scaler = TwoDimensionalTransformInterpolator(output_size, screen_size, kernel, full_transform)
-        mul!(opd[:, :, l], scaler, atmosphere.opd[:, :, l])            
+        for w=1:atmosphere.nλ
+            mul!(ϕ[:, :, l, w], scaler, atmosphere.phase[:, :, l, w])
+        end
     end
-    atmosphere.opd = opd
-    atmosphere.opd .*= atmosphere.masks[:, :, :, 1]
+    atmosphere.phase = ϕ
+    atmosphere.phase .*= atmosphere.masks
 
+    scaleby_wavelength = atmosphere.λ_nyquist ./ atmosphere.λ
     if reconstruction != []
         helpers = reconstruction.helpers
-        patch_helpers = reconstruction.patch_helpers
-        if helpers != []
-            helpers = reconstruction.helpers
-            helpers.g_threads_opd = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, Threads.nthreads())
-            helpers.phase_full = zeros(FTYPE, atmosphere.dim, atmosphere.dim, Threads.nthreads())
-            helpers.containers_sdim_real = zeros(FTYPE, atmosphere.dim, atmosphere.dim, Threads.nthreads())
-        end
-
-        if patch_helpers != []
-            scaleby_height = layer_scale_factors(atmosphere.heights, object.height)
-            scaleby_wavelength = atmosphere.λ_nyquist ./ atmosphere.λ
-            patch_helpers.extractor = create_patch_extractors(patches, atmosphere, observations_full, object, scaleby_wavelength, scaleby_height)
-            patch_helpers.extractor_adj = create_patch_extractors_adjoint(patches, atmosphere, observations_full, object, scaleby_wavelength, scaleby_height)
-        end
+        helpers = reconstruction.helpers
+        helpers.g_threads_ϕ = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ, Threads.nthreads())
+        helpers.ϕ_full = zeros(FTYPE, atmosphere.dim, atmosphere.dim, Threads.nthreads())
+        helpers.containers_sdim_real = zeros(FTYPE, atmosphere.dim, atmosphere.dim, Threads.nthreads())
+        helpers.containers_sdim_cplx = zeros(Complex{FTYPE}, atmosphere.dim, atmosphere.dim, Threads.nthreads())
+        helpers.extractor[1, :, :, :, :] .= create_patch_extractors(patches, atmosphere, observations_full, object, scaleby_wavelength, scaleby_height, build_dim=reconstruction.build_dim)
+        helpers.extractor_adj[1, :, :, :, :] .= create_patch_extractors_adjoint(patches, atmosphere, observations_full, object, scaleby_wavelength, scaleby_height, build_dim=reconstruction.build_dim)
     end
 end

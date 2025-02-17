@@ -6,7 +6,7 @@ function Base.display(masks::T) where {T<:AbstractMasks}
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Masks\n"); print(Crayon(reset=true))
     println("\tSize: $(masks.dim)×$(masks.dim) pixels")
     println("\tConfiguration: $(masks.nsubaps_side)×$(masks.nsubaps_side) subapertures")
-    println("\tWavelength: $(minimum(masks.λ))—$(maximum(masks.λ)) nm")
+    println("\tWavelength: $(minimum(masks.λ)) — $(maximum(masks.λ)) m")
     println("\tNumber of wavelengths: $(length(masks.λ)) wavelengths")
 end
 

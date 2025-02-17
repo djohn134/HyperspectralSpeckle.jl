@@ -9,10 +9,10 @@ function Base.display(object::T) where {T<:AbstractObject}
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Object\n"); print(Crayon(reset=true))
     println("\tSize: $(object.dim)×$(object.dim) pixels")
     println("\tFOV: $(object.fov)×$(object.fov) arcsec")
-    println("\tHeight: $(object.height) km")
+    println("\tRange: $(object.range) m")
     println("\tFlux: $(object.flux) ph")
     println("\tBackground flux: $(object.background_flux) ph")
-    println("\tWavelength: $(minimum(object.λ))—$(maximum(object.λ)) nm")
+    println("\tWavelength: $(minimum(object.λ)) — $(maximum(object.λ)) m")
     println("\tNumber of wavelengths: $(length(object.λ))")
 end
 
@@ -20,7 +20,7 @@ mutable struct Object{T<:AbstractFloat} <: AbstractObject
     dim::Int64
     λ::Vector{T}
     nλ::Int64
-    height::T
+    range::T
     fov::T
     sampling_arcsecperpix::T
     spectrum::Vector{T}
@@ -34,7 +34,7 @@ mutable struct Object{T<:AbstractFloat} <: AbstractObject
             λ=[Inf], 
             dim=0, 
             fov=0,
-            height=0,
+            object_range=0,
             spectrum=[0],
             scaled=false,
             FTYPE=Float64,
@@ -50,7 +50,7 @@ mutable struct Object{T<:AbstractFloat} <: AbstractObject
             object_arr ./= sum(object_arr)
             object_arr .*= flux / Δλ
         end
-        object = new{FTYPE}(dim, λ, nλ, height, fov, sampling_arcsecperpix, spectrum, flux, background_flux, object_arr)
+        object = new{FTYPE}(dim, λ, nλ, object_range, fov, sampling_arcsecperpix, spectrum, flux, background_flux, object_arr)
         if verb == true
             display(object)
         end
@@ -60,20 +60,23 @@ end
 
 function mag2flux(mag, filter; D=3.6, ζ=0.0, exptime=20e-3)
     ## Flux at top of atmosphere
-    area = pi*(D/2)^2
-    airmass = sec(ζ*pi/180)
-    λfilter, filter_response = filter.λ, filter.response
-    nphotons_vega = exptime * area * magnitude_zeropoint(λfilter, filter_response);
-    nphotons = nphotons_vega * 10^(-(mag+0.3*airmass)/2.5)
-    return nphotons 
+    area = pi * (D/2)^2  # m^2
+    airmass = secd(ζ)
+    irradiance_vega = magnitude_zeropoint(filter.λ, filter.response)  # ph/s/m^2
+    radiant_energy_target = exptime * area * irradiance_vega * 10^(-(mag + 0.3*airmass) / 2.5)  # ph
+    return radiant_energy_target
 end
 
 function magnitude_zeropoint(λfilter, filter_response)
     # Photons per square meter per second produced by a 0th mag star above the atmosphere.
     # Assuming spectrum like Vega
-    ~, flux = vega_spectrum(λ=λfilter)
-    nphot = NumericalIntegration.integrate(λfilter, flux .* filter_response)
-    return nphot
+    h = 6.63e-34  # J s
+    c = 3e8  # m / s
+
+    ~, spectral_irradiance = vega_spectrum(λ=λfilter)  # W/m^2/m
+    spectral_irradiance ./= h*c ./ λfilter  # ph/s/m^2/m
+    irradiance = NumericalIntegration.integrate(λfilter, spectral_irradiance .* filter_response)  # ph/s/m^2
+    return irradiance
 end
 
 @views function template2object(template, dim, λ; FTYPE=Float64)
@@ -95,7 +98,7 @@ end
     materials[6] = 1e-2*materials[1];
     # Read in data image (FITS format)
     object_coeffs = Int.(crop(readfits(template), dim))
-    spectra = hcat([[sum([materials[i][ll+1] * λ[k].^ll for ll in 0:length(materials[i])-1]) for k = 1:nλ] for i=1:nmaterials]...) ./ 100
+    spectra = hcat([[sum([materials[i][ll+1] * (λ[k].*1e9).^ll for ll in 0:length(materials[i])-1]) for k = 1:nλ] for i=1:nmaterials]...) ./ 100
 
     for i = 1:nmaterials    
         indx = findall(object_coeffs .== i)
@@ -152,7 +155,7 @@ end
     mask = ones(FTYPE, observations.dim, observations.dim)
     for n=1:observations.nsubaps
         for t=1:observations.nepochs
-            for nn=1:10
+            for ~=1:10
                 backgrounds[:, :, n, t] .= fit_plane(observations.images[:, :, n, t], mask)
                 res = observations.images[:, :, n, t] .- backgrounds[:, :, n, t]
                 σ = std(res)

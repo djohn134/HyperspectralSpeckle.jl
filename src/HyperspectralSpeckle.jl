@@ -1,6 +1,15 @@
 module HyperspectralSpeckle
 
-const symbol2str = Dict(:opd=>"opd", :phase=>"phase", :static_phase=>"static_phase", :gaussian=>"gaussian", :mixed=>"noise", :mle=>"mle", :mrl=>"mrl")
+const symbol2str = Dict(
+    :opd=>"opd", 
+    :phase=>"phase", 
+    :psf=>"psf",
+    :static_phase=>"static_phase", 
+    :gaussian=>"gaussian", 
+    :mixed=>"noise", 
+    :mle=>"mle", 
+    :mrl=>"mrl"
+)
 export symbol2str
 
 ## masks
@@ -65,7 +74,7 @@ export ConstantSchedule, LinearSchedule, ReciprocalSchedule, ExponentialSchedule
 
 ## utils
 include("utils.jl")
-export gettype, writefits, writefile, writeobject, readobject, readfile, readqe, readimages, readmasks, readfits, readspectrum, readtransmission, vega_spectrum, solar_spectrum
+export gettype, create_header, writefits, writefile, writeobject, readobject, readfile, readqe, readimages, readmasks, readfits, readspectrum, readtransmission, vega_spectrum, solar_spectrum
 export gaussian_kernel, calculate_entropy, calculate_ssim, shift_and_add, fit_plane, crop, smooth_to_rmse!, bartlett_hann2d, super_gaussian, block_reduce!, block_reduce, block_replicate!, block_replicate, stack2mosaic, create_zernike_screen, smooth_to_resolution, interpolate1d, center_of_gravity
 export setup_fft, setup_ifft, setup_conv, preconvolve, setup_corr, precorrelate, setup_autocorr, setup_operator_mul
 
