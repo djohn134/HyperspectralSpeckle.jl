@@ -150,6 +150,7 @@ mutable struct Observations{T<:AbstractFloat, S<:Real} <: AbstractObservations
     detector::Detector{T, S}
     ζ::T
     D::T
+    times::Vector{T}
     nepochs::Int64
     nsubaps::Int64
     nsubaps_side::Int64
@@ -158,11 +159,13 @@ mutable struct Observations{T<:AbstractFloat, S<:Real} <: AbstractObservations
     entropy::Matrix{T}
     model_images::Array{T, 4}
     w::Vector{Int64}
+    positions::Array{T, 4}
     function Observations(
             optics,
             detector;
             ζ=Inf,
             D=Inf,
+            times=[],
             nepochs=0,
             nsubaps=0,
             nsubaps_side=1,
@@ -171,15 +174,17 @@ mutable struct Observations{T<:AbstractFloat, S<:Real} <: AbstractObservations
             verb=true,
             FTYPE=Float64
         )
+        nepochs = (nepochs==0) ? length(times) : nepochs
         DTYPE = gettypes(detector)[2]
         optics.response .*= detector.qe
-        observations = new{FTYPE, DTYPE}(optics, ϕ_static, detector, ζ, D, nepochs, nsubaps, nsubaps_side, dim)
+        observations = new{FTYPE, DTYPE}(optics, ϕ_static, detector, ζ, D, times, nepochs, nsubaps, nsubaps_side, dim)
         if verb == true
             display(observations)
         end
         return observations
     end
     function Observations(
+            times,
             images,
             optics,
             detector;
@@ -194,7 +199,7 @@ mutable struct Observations{T<:AbstractFloat, S<:Real} <: AbstractObservations
         entropy = [calculate_entropy(images[:, :, n, t]) for n=1:nsubaps, t=1:nepochs]
         DTYPE = gettypes(detector)[2]
         optics.response .*= detector.qe
-        observations = new{FTYPE, DTYPE}(optics, ϕ_static, detector, ζ, D, nepochs, nsubaps, nsubaps_side, dim, images, entropy)
+        observations = new{FTYPE, DTYPE}(optics, ϕ_static, detector, ζ, D, times, nepochs, nsubaps, nsubaps_side, dim, images, entropy)
         if verb == true
             display(observations)
         end
