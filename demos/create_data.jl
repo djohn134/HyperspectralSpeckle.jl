@@ -224,6 +224,5 @@ writefits(atmosphere.phase, "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_ph
 
 ########## Create Full-Ap images ##########
 [create_images(patches, observations[dd], atmosphere, masks[dd], object, build_dim=image_dim, noise=noise) for dd=1:length(observations)]
-header = create_header(λ, "counts")
-[writefits(observations[dd].images, "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_images$(id).fits", header=header) for dd=1:length(observations)]
+[writefits(observations[dd].images, "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_images$(id).fits", header=create_header(observations[dd])) for dd=1:length(observations)]
 ###########################################

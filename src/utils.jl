@@ -13,7 +13,7 @@ function gettypes(T)
     return typeof(T).parameters
 end
 
-function create_header(λ, units)
+function create_header(λ::AbstractVector{<:AbstractFloat}, units::String)
     λmin = minimum(λ)
     λmax = maximum(λ)
     nλ = length(λ)
@@ -21,6 +21,18 @@ function create_header(λ, units)
         ["WAVELENGTH_START", "WAVELENGTH_END", "WAVELENGTH_STEPS", "BUNIT"], 
         [λmin, λmax, nλ, units],
         ["Shortest wavelength of mask [m]", "Largest wavelength of mask [m]", "Number of wavelength steps", "Image Units"]
+    )
+    return header
+end
+
+function create_header(observations::Observations{<:Number, <:Number})
+    λmin = minimum(observations.detector.λ)
+    λmax = maximum(observations.detector.λ)
+    nλ = length(observations.detector.λ)
+    header = (
+        ["WAVELENGTH_START", "WAVELENGTH_END", "WAVELENGTH_STEPS", "BUNIT", "EXPTIME", "TIME-START", "TELAPSE"], 
+        [λmin, λmax, nλ, "counts", observations.detector.exptime, minimum(observations.times), observations.detector.exptime],  # Assumes frame time is the same as exposure time
+        ["Shortest wavelength of mask [m]", "Largest wavelength of mask [m]", "Number of wavelength steps", "Image Units", "Exposure Time [s]", "Start time of the observations [s]", "Elapsed time of each frame [s]"]
     )
     return header
 end
@@ -100,7 +112,13 @@ end
     nsubaps = size(images, 3);
     nepochs = size(images, 4);
     dim = size(images, 1);
-    return images, nsubaps, nepochs, dim
+    
+    hdr = read_header(file)
+    exptime = hdr["EXPTIME"]
+    elapsed = hdr["TELAPSE"]
+    tstart = hdr["TIME-START"]
+    times = collect(tstart:elapsed:tstart+(nepochs-1)*elapsed)   
+    return images, nsubaps, nepochs, dim, exptime, times
 end
 
 function calculate_entropy(x)
@@ -111,10 +129,10 @@ end
 
 function readmasks(file::String; FTYPE=Float64)
     masks = readfits(file, FTYPE=FTYPE)
-    hdu = FITS(file)[1]
-    λstart = read_key(hdu, "WAVELENGTH_START")[1]
-    λend = read_key(hdu, "WAVELENGTH_END")[1]
-    nλ = read_key(hdu, "WAVELENGTH_STEPS")[1]
+    hdr = read_header(file)
+    λstart = hdr["WAVELENGTH_START"]
+    λend = hdr["WAVELENGTH_END"]
+    nλ = hdr["WAVELENGTH_STEPS"]
     λ = FTYPE.(collect(range(λstart, stop=λend, length=nλ)))
     return masks, λ
 end
@@ -126,10 +144,10 @@ function readmasks(files::Vector{String}; FTYPE=Float64)
         masks[i] = readfits(files[i], FTYPE=FTYPE)
     end
 
-    hdu = FITS(files[1])[1]
-    λstart = read_key(hdu, "WAVELENGTH_START")[1]
-    λend = read_key(hdu, "WAVELENGTH_END")[1]
-    nλ = read_key(hdu, "WAVELENGTH_STEPS")[1]
+    hdr = read_header(files[1])
+    λstart = hdr["WAVELENGTH_START"]
+    λend = hdr["WAVELENGTH_END"]
+    nλ = hdr["WAVELENGTH_STEPS"]
     λ = FTYPE.(collect(range(λstart, stop=λend, length=nλ)))
 
     masks = cat(masks..., dims=3)

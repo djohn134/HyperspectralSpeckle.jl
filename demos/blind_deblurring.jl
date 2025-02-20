@@ -53,21 +53,22 @@ beamsplitter = OpticalElement(λ=[0.0, 10000.0], response=[0.5, 0.5], FTYPE=FTYP
 optics_full = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 # optics_full = OpticalSystem([filter], λ, verb=verb, FTYPE=FTYPE)
 ######### Create Full-Ap Detector #########
+datafile = "$(folder)/Dr0_20_ISH1x1_images.fits"
+images_full, ~, nepochs, image_dim, exptime_full, times_full = readimages(datafile, FTYPE=FTYPE)
 detector_full = Detector(
     qe=qe,
     rn=rn,
     pixscale=pixscale_full,
     λ=λ,
     λ_nyquist=λ_nyquist,
-    exptime=exptime,
+    exptime=exptime_full,
     verb=verb,
     FTYPE=FTYPE
 )
 ### Create Full-Ap Observations object ####
-datafile = "$(folder)/Dr0_20_ISH1x1_images.fits"
-images_full, ~, ~, image_dim = readimages(datafile, FTYPE=FTYPE)
 ϕ_static_full = zeros(FTYPE, image_dim, image_dim, nλ)
 observations_full = Observations(
+    times_full,
     images_full,
     optics_full,
     detector_full,
@@ -78,6 +79,8 @@ observations_full = Observations(
     FTYPE=FTYPE
 )
 # observations = [observations_full]
+datafile = "$(folder)/Dr0_20_ISH$(nsubaps_side)x$(nsubaps_side)_images.fits"
+images_wfs, nsubaps, ~, wfs_dim, exptime_wfs, times_wfs = readimages(datafile, FTYPE=FTYPE)
 optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 detector_wfs = Detector(
     qe=qe,
@@ -85,15 +88,14 @@ detector_wfs = Detector(
     pixscale=pixscale_wfs,
     λ=λ,
     λ_nyquist=λ_nyquist,
-    exptime=exptime,
+    exptime=exptime_wfs,
     verb=verb,
     FTYPE=FTYPE
 )
 ### Create Full-Ap Observations object ####
-datafile = "$(folder)/Dr0_20_ISH$(nsubaps_side)x$(nsubaps_side)_images.fits"
-images_wfs, nsubaps, ~, wfs_dim = readimages(datafile, FTYPE=FTYPE)
 ϕ_static_wfs = zeros(FTYPE, image_dim, image_dim, nλ)
 observations_wfs = Observations(
+    times_wfs,
     images_wfs,
     optics_wfs,
     detector_wfs,
@@ -134,11 +136,11 @@ masks = [masks_wfs, masks_full]
 ############ Object Parameters ############
 object_range = 300.0e3  # km
 ############## Create object ##############
-# object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background_flux/observations_full.dim^2, 0)
-# object_arr = repeat(object_arr, 1, 1, nλ)
-# object_arr ./= sum(object_arr)
-# object_arr .*= mean(sum(observations_full.images, dims=(1, 2, 3))) - background_flux
-object_arr = readfits("$(folder)/object_recon.fits")
+object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background_flux/observations_full.dim^2, 0)
+object_arr = repeat(object_arr, 1, 1, nλ)
+object_arr ./= sum(object_arr)
+object_arr .*= mean(sum(observations_full.images, dims=(1, 2, 3))) - background_flux
+# object_arr = readfits("$(folder)/object_recon.fits")
 # object_arr = readfits("$(folder)/object_truth.fits")
 # object_arr = zeros(FTYPE, image_dim, image_dim, nλ)
 ~, spectrum = solar_spectrum(λ=λ)
@@ -172,8 +174,8 @@ sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heig
 ############ Create Atmosphere ############
 atmosphere = Atmosphere(
     λ,
-    observations_full, 
-    masks_full,
+    observations, 
+    masks,
     object, 
     patches,
     wind=wind, 
@@ -187,10 +189,10 @@ atmosphere = Atmosphere(
     verb=verb
 )
 ######### Set phase screens start #########
-# atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
-atmosphere.phase = readfits("$(folder)/phase_recon.fits")
+atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
+# atmosphere.phase = readfits("$(folder)/phase_recon.fits")
 ###########################################
-
+exit()
 ######### Reconstruction Object ###########
 reconstruction = Reconstruction(
     atmosphere,
@@ -203,10 +205,10 @@ reconstruction = Reconstruction(
     nλint=nλint,
     niter_mfbd=10,
     maxiter=10,
-    indx_boot=[1:2],
+    # indx_boot=[1:2],
     wavefront_parameter=:phase,
     minimization_scheme=:mle,
-    noise_model=:mixed,
+    noise_model=:gaussian,
     maxeval=Dict("wf"=>1000, "object"=>1000),
     smoothing=true,
     fwhm_schedule=ConstantSchedule(0.5),
