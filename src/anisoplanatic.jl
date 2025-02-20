@@ -99,21 +99,19 @@ end
     return extractor_adj
 end
 
-@views function change_heights!(patches, atmosphere, object, observations_full, masks_full, heights; reconstruction=[], verb=true)
+@views function change_heights!(patches, atmosphere, object, observations, masks, heights; reconstruction=[], verb=true)
     if verb == true
         println("Heights changed from $(atmosphere.heights) m to $(heights) m")
     end
     
-    FTYPE = gettype(observations_full)
+    FTYPE = gettype(atmosphere)
     original_heights = atmosphere.heights
     original_dim = atmosphere.dim
     original_sampling_nyquist_arcsecperpix = atmosphere.sampling_nyquist_arcsecperpix
     atmosphere.heights = heights
-    atmosphere.sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(observations_full.D, object.fov, heights, observations_full.dim)
+    atmosphere.sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(observations[1].D, object.fov, heights, object.dim)
 
-    calculate_screen_size!(atmosphere, observations_full, object, patches, verb=verb)
-    calculate_pupil_positions!(atmosphere, observations_full, verb=verb)
-    calculate_layer_masks!(patches, atmosphere, observations_full, object, masks_full, verb=verb)
+    calculate_atmosphere_parameters!(atmosphere, observations, object, patches, verb=false)
     ϕ = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
 
     scaleby_height = original_sampling_nyquist_arcsecperpix ./ atmosphere.sampling_nyquist_arcsecperpix
@@ -139,7 +137,9 @@ end
         helpers.ϕ_full = zeros(FTYPE, atmosphere.dim, atmosphere.dim, Threads.nthreads())
         helpers.containers_sdim_real = zeros(FTYPE, atmosphere.dim, atmosphere.dim, Threads.nthreads())
         helpers.containers_sdim_cplx = zeros(Complex{FTYPE}, atmosphere.dim, atmosphere.dim, Threads.nthreads())
-        helpers.extractor[1, :, :, :, :] .= create_patch_extractors(patches, atmosphere, observations_full, object, scaleby_wavelength, scaleby_height, build_dim=reconstruction.build_dim)
-        helpers.extractor_adj[1, :, :, :, :] .= create_patch_extractors_adjoint(patches, atmosphere, observations_full, object, scaleby_wavelength, scaleby_height, build_dim=reconstruction.build_dim)
+        for dd=1:reconstruction.ndatasets
+            helpers.extractor[dd] = create_patch_extractors(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=reconstruction.build_dim)
+            helpers.extractor_adj[dd] = create_patch_extractors_adjoint(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=reconstruction.build_dim)
+        end
     end
 end

@@ -65,8 +65,8 @@ function ReciprocalSchedule(maxval, minval)
 end
 
 mutable struct Helpers{T<:AbstractFloat}
-    extractor::Array{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}, 5}
-    extractor_adj::Array{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}, 5}
+    extractor::Vector{Array{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}, 4}}
+    extractor_adj::Vector{Array{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}, 4}}
     refraction::Matrix{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}}
     refraction_adj::Matrix{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}}
     ft::Vector{Function}
@@ -157,8 +157,8 @@ mutable struct Helpers{T<:AbstractFloat}
         containers_pdim_real = Vector{Array{FTYPE, 3}}(undef, ndatasets)
         containers_pdim_cplx = Vector{Array{Complex{FTYPE}, 3}}(undef, ndatasets)
 
-        extractor = Array{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}, 5}(undef, ndatasets, observations[1].nepochs, patches.npatches, atmosphere.nlayers, nλtotal)
-        extractor_adj = Array{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}, 5}(undef, ndatasets, observations[1].nepochs, patches.npatches, atmosphere.nlayers, nλtotal)
+        extractor = Vector{Array{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}, 4}}(undef, ndatasets)
+        extractor_adj = Vector{Array{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}, 4}}(undef, ndatasets)
         refraction = Matrix{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}}(undef, ndatasets, nλtotal)
         refraction_adj = Matrix{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}}(undef, ndatasets, nλtotal)
         for dd=1:ndatasets
@@ -173,8 +173,8 @@ mutable struct Helpers{T<:AbstractFloat}
             scaleby_height = layer_scale_factors(atmosphere.heights, object.range)            
             refraction[dd, :] .= create_refraction_operator.(λtotal, atmosphere.λ_ref, observations[dd].ζ, observations[dd].detector.pixscale, build_dim, FTYPE=FTYPE)
             refraction_adj[dd, :] .= create_refraction_adjoint.(λtotal, atmosphere.λ_ref, observations[dd].ζ, observations[dd].detector.pixscale, build_dim, FTYPE=FTYPE)
-            extractor[dd, :, :, :, :] .= create_patch_extractors(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
-            extractor_adj[dd, :, :, :, :] .= create_patch_extractors_adjoint(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
+            extractor[dd] = create_patch_extractors(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
+            extractor_adj[dd] = create_patch_extractors_adjoint(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
         end
 
         return new{FTYPE}(extractor, extractor_adj, refraction, refraction_adj, fft_threads, ifft_threads, conv_threads, corr_threads, autocorr_threads, A, ϕ_full, ϕ_slices, ϕ_composite, o_conv, o_corr, smoothing_kernel, smooth, unsmooth, P, p, c, d, d2, psf, psf_temp, object_patch, image_temp_big, image_temp_small, r, ω, mask_acf, ϵ_threads, g_threads_obj, g_threads_opd, g_threads_ϕ, containers_builddim_real, containers_builddim_cplx, containers_sdim_real, containers_sdim_cplx, containers_pdim_real, containers_pdim_cplx)
@@ -460,7 +460,7 @@ end
             for h=1:length(height_trials[l])
                 heights[order2fit[l]] = height_trials[l][h]
                 print("\tHeight: $(heights)\t")
-                change_heights!(patches, atmosphere, object, observations[end], masks[end], heights, reconstruction=reconstruction, verb=false)
+                change_heights!(patches, atmosphere, object, observations, masks, heights, reconstruction=reconstruction, verb=false)
                 reconstruct!(reconstruction, observations, atmosphere, object, masks, patches, closeplots=false)
                 ϵ[l][h] = sum(reconstruction.ϵ[1])
                 println("ϵ: $(ϵ[l][h])")
@@ -471,7 +471,7 @@ end
                 end
             end
             heights[order2fit[l]] = height_trials[l][argmin(ϵ[l])]
-            change_heights!(patches, atmosphere, object, observations[end], masks[end], heights, reconstruction=reconstruction, verb=false)
+            change_heights!(patches, atmosphere, object, observations, masks, heights, reconstruction=reconstruction, verb=false)
         end
         println("Optimal Heights: $(heights)")
         reconstruct!(reconstruction, observations, atmosphere, object, masks, patches, closeplots=false)

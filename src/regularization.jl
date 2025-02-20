@@ -1,4 +1,12 @@
-mutable struct Regularizers{T<:AbstractFloat}
+abstract type AbstractRegularizers end
+function Base.display(regularizers::T) where {T<:AbstractRegularizers}
+    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Regularizers\n"); print(Crayon(reset=true))
+    println("\tObject spatial regularizer: $(regularizers.o_reg), β₀=$(regularizers.βo) (schedule: $(regularizers.βo_schedule))")
+    println("\tObject wavelength regularizer: $(regularizers.λ_reg), β₀=$(regularizers.βλ) (schedule: $(regularizers.βλ_schedule))")
+    println("\tWavefront spatial regularizer: $(regularizers.wf_reg), β₀=$(regularizers.βwf) (schedule: $(regularizers.βwf_schedule))")
+end
+
+mutable struct Regularizers{T<:AbstractFloat} <: AbstractRegularizers
     o_reg::Function
     wf_reg::Function
     λ_reg::Function
@@ -21,14 +29,11 @@ mutable struct Regularizers{T<:AbstractFloat}
             verb=true,
             FTYPE=Float64
         )
+        regularizers = new{FTYPE}(o_reg, wf_reg, λ_reg, βo, βwf, βλ, βo_schedule, βwf_schedule, βλ_schedule)
         if verb == true
-            print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Regularizers\n"); print(Crayon(reset=true))
-            println("\tObject spatial regularizer: $(o_reg), β₀=$(βo) (schedule: $(βo_schedule))")
-            println("\tObject wavelength regularizer: $(λ_reg), β₀=$(βλ) (schedule: $(βλ_schedule))")
-            println("\tWavefront spatial regularizer: $(wf_reg), β₀=$(βwf) (schedule: $(βwf_schedule))")
+            display(regularizers)
         end
-
-        return new{FTYPE}(o_reg, wf_reg, λ_reg, βo, βwf, βλ, βo_schedule, βwf_schedule, βλ_schedule)
+        return regularizers
     end
 end
 

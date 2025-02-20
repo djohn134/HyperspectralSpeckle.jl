@@ -136,11 +136,11 @@ masks = [masks_wfs, masks_full]
 ############ Object Parameters ############
 object_range = 300.0e3  # km
 ############## Create object ##############
-object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background_flux/observations_full.dim^2, 0)
-object_arr = repeat(object_arr, 1, 1, nλ)
-object_arr ./= sum(object_arr)
-object_arr .*= mean(sum(observations_full.images, dims=(1, 2, 3))) - background_flux
-# object_arr = readfits("$(folder)/object_recon.fits")
+# object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background_flux/observations_full.dim^2, 0)
+# object_arr = repeat(object_arr, 1, 1, nλ)
+# object_arr ./= sum(object_arr)
+# object_arr .*= mean(sum(observations_full.images, dims=(1, 2, 3))) - background_flux
+object_arr = readfits("$(folder)/object_recon.fits")
 # object_arr = readfits("$(folder)/object_truth.fits")
 # object_arr = zeros(FTYPE, image_dim, image_dim, nλ)
 ~, spectrum = solar_spectrum(λ=λ)
@@ -189,10 +189,10 @@ atmosphere = Atmosphere(
     verb=verb
 )
 ######### Set phase screens start #########
-atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
-# atmosphere.phase = readfits("$(folder)/phase_recon.fits")
+# atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
+atmosphere.phase = readfits("$(folder)/phase_recon.fits")
 ###########################################
-exit()
+
 ######### Reconstruction Object ###########
 reconstruction = Reconstruction(
     atmosphere,
@@ -205,10 +205,10 @@ reconstruction = Reconstruction(
     nλint=nλint,
     niter_mfbd=10,
     maxiter=10,
-    # indx_boot=[1:2],
+    indx_boot=[1:2],
     wavefront_parameter=:phase,
     minimization_scheme=:mle,
-    noise_model=:gaussian,
+    noise_model=:mixed,
     maxeval=Dict("wf"=>1000, "object"=>1000),
     smoothing=true,
     fwhm_schedule=ConstantSchedule(0.5),

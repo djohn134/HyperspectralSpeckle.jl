@@ -65,9 +65,10 @@ detector_full = Detector(
 )
 ### Create Full-Ap Observations object ####
 datafile = "$(folder)/Dr0_20_ISH1x1_images.fits"
-images_full, ~, ~, image_dim = readimages(datafile, FTYPE=FTYPE)
+images_full, ~, nepochs, image_dim, exptime_full, times_full = readimages(datafile, FTYPE=FTYPE)
 ϕ_static_full = zeros(FTYPE, image_dim, image_dim, nλ)
 observations_full = Observations(
+    times_full,
     images_full,
     optics_full,
     detector_full,
@@ -172,8 +173,8 @@ sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heig
 ############ Create Atmosphere ############
 atmosphere = Atmosphere(
     λ,
-    observations_full, 
-    masks_full,
+    observations, 
+    masks,
     object, 
     patches,
     wind=wind, 
