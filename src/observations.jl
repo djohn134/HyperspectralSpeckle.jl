@@ -68,6 +68,17 @@ struct OpticalElement{T<:AbstractFloat}
             name="",
             FTYPE=Float64
         )
+        """
+            OpticalElement(; λ=..., response=..., xflip=..., yflip=..., name=..., FTYPE=...)
+
+        Creates an `OpticalElement` structure. If `name` is specified and matches an entry in `ELEMENT_FILENAMES`
+        it will read the spectral response of the object from the corresponding file. `λ` and `response` can be 
+        specified manually to create an optical element.
+
+        * `xflip` can be specified to cause the element to flip the image about the y axis
+        * `yflip` can be specified to cause the element to flip the image about the x axis
+        * `FTYPE` can be specified to change the Floating-point precision
+        """
         if name != ""
             λ₀, response = readfile(ELEMENT_FILENAMES["$name"])
             λ₀ .*= 1e-9

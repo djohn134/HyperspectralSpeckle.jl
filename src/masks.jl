@@ -21,6 +21,14 @@ mutable struct Masks{T<:AbstractFloat} <: AbstractMasks
     nsubaps_side::Int64
     scale_psfs::Vector{T}
     ix::Vector{Int64}
+    """
+        Masks(dim, λ; nsubaps_side=..., λ_nyquist=..., verb=..., FTYPE=...)
+
+    Create `Masks` struct. Mask arrays are created by [`HyperspeckleSpeckle.create_ish_masks`](@ref).
+
+    * `verb` can be specified to print information on the masks to the terminal
+    * `FTYPE` can be specified to change the Floating-point precision of the masks
+    """
     function Masks(
             dim, 
             λ;
@@ -42,6 +50,13 @@ mutable struct Masks{T<:AbstractFloat} <: AbstractMasks
     end
 end
 
+"""
+    mask = make_simple_mask(dim, D; FTYPE=...)
+
+Create circular mask of diameter `D` in pixels within an array of size `dim` by `dim`.
+
+* `FTYPE` can be specified to change the Floating-point precision of the mask
+"""
 @views function make_simple_mask(dim, D, FTYPE=Float64)
     nn = dim÷2 + 1
     x = collect(1:dim) .- nn
@@ -92,6 +107,18 @@ end
     return subaperture_masks
 end
 
+"""
+    subaperture_masks, ix = maks_ish_masks(dim, nsubaps_side, λ; λ_nyquist=..., verb=..., FTYPE=...)
+
+Creates pupil masks of size `dim` by `dim` at wavelengths `λ`. If given `nsubaps_side`>1 it will create square
+pupil masks for a Shack-Hartmann wavefront sensor. Masks will be nyquist sampled at `λ_nyquist`, meaning the 
+pupil diameter will be exactly half the size of the array. Also returns the linear indices `ix` of an 
+`nsubaps_side` by `nsubaps_side` grid that removes corner subaps with little representation. For 6 by 6
+subaps, `ix` will start with indices 1:36 and then exclude 1, 6, 30, and 36.
+
+* `verb` can be specified to print information on the masks to the terminal
+* `FTYPE` can be specified to change the Floating-point precision of the mask
+"""
 @views function make_ish_masks(dim, nsubaps_side, λ::Vector{<:AbstractFloat}; λ_nyquist=minimum(λ), verb=true, FTYPE=Float64)
     if verb == true
         print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Masks\n"); print(Crayon(reset=true))
