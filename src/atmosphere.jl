@@ -211,6 +211,7 @@ end
     mint = minimum([minimum(observations[dd].times) for dd=1:ndatasets])
     maxt = maximum([maximum(observations[dd].times) for dd=1:ndatasets])
     Δt_total = maxt - mint
+    maxt = (maxt==0) ? 1.0 : maxt
     Δpos_meters_total = Δt_total .* [atmosphere.wind[:, 1].*sind.(atmosphere.wind[:, 2]) atmosphere.wind[:, 1].*cosd.(atmosphere.wind[:, 2])]'
     Δpos_pix_total = Δpos_meters_total ./ minimum(atmosphere.sampling_nyquist_mperpix)
     initial_coord = [(atmosphere.dim .- Δpos_pix_total[:, l]) / 2 for l=1:atmosphere.nlayers]

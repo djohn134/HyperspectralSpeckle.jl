@@ -15,12 +15,13 @@ export symbol2str
 ## masks
 include("masks.jl")
 export Masks
-export make_ish_masks, make_simple_mask
+export make_ish_masks, make_annular_mask
 
 ## imaging
 include("imaging.jl")
-export create_refraction_operator, create_refraction_adjoint, create_extractor_operator, create_extractor_adjoint, pupil2psf, pupil2psf!, poly2broadbandpsfs, poly2broadbandpsfs!, position2phase, position2phase!, add_noise!
-export calculate_composite_pupil!, calculate_composite_phase!, calculate_composite_amplitude!, create_patch_spectral_image!, create_images, create_images!, create_monochromatic_image, create_monochromatic_image!, create_polychromatic_image, create_polychromatic_image!
+export create_refraction_operator, create_refraction_adjoint, create_extractor_operator, create_extractor_adjoint, pupil2psf!, position2phase!
+export calculate_composite_pupil!, calculate_composite_phase!, calculate_composite_amplitude!
+export create_spectral_irradiance_at_aperture!, create_detector_images, create_detector_images!, add_noise!
 
 include("anisoplanatic.jl")
 export AnisoplanaticPatches

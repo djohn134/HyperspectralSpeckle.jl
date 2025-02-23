@@ -25,32 +25,10 @@ nλ = 1
 Δλ = (nλ == 1) ? 1.0 : (λmax - λmin) / (nλ - 1)  # m
 resolution = mean(λ) / Δλ
 
-########## Create Full-Ap Masks ###########
-masks_full = Masks(
-    image_dim,
-    λ,
-    nsubaps_side=1,  
-    λ_nyquist=λ_nyquist, 
-    verb=verb,
-    FTYPE=FTYPE
-)
-# masks = [masks_full]
-masks_wfs = Masks(
-    image_dim,
-    λ,
-    nsubaps_side=nsubaps_side,
-    λ_nyquist=λ_nyquist, 
-    FTYPE=FTYPE
-)
-nsubaps = masks_wfs.nsubaps
-masks_wfs.scale_psfs = masks_full.scale_psfs
-masks = [masks_full, masks_wfs]
-header = create_header(λ, "unitless")
-[writefits(masks[dd].masks, "$(folder)/masks_ISH$(masks[dd].nsubaps_side)x$(masks[dd].nsubaps_side)$(id).fits", header=header) for dd=1:length(masks)]
-###########################################
-
 ### Detector & Observations Parameters ####
 D = 3.6  # m
+D_inner_frac = 0.5
+aperture_area = pi * (D / 2)^2 * (1 - D_inner_frac^2)
 fov = 50.0  # arcsec
 pixscale_full = fov / image_dim  # arcsec/pix
 pixscale_wfs = pixscale_full .* nsubaps_side  # arcsec/pix
@@ -65,8 +43,9 @@ saturation = 30000.0  # e⁻
 gain = saturation / (typemax(DTYPE))  # e⁻ / ADU
 # gain = 1.0  # e⁻ / ADU
 exptime = 5e-3  # sec
-nepochs = 33
-times = collect(0:nepochs-1) .* exptime
+nepochs = 1
+# times = collect(0:nepochs-1) .* exptime
+times = [0.0]
 noise = true
 ζ = 0.0  # deg
 ########## Create Optical System ##########
@@ -76,6 +55,15 @@ beamsplitter = OpticalElement(λ=[400.0e-9, 1000.0e-9], response=[0.5, 0.5], FTY
 optics_full = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 # optics_full = OpticalSystem([filter], λ, verb=verb, FTYPE=FTYPE)
 ######### Create Full-Ap Detector #########
+masks_full = Masks(
+    image_dim,
+    λ,
+    nsubaps_side=1,
+    D_inner_frac=D_inner_frac, 
+    λ_nyquist=λ_nyquist, 
+    verb=verb,
+    FTYPE=FTYPE
+)
 detector_full = Detector(
     qe=qe,
     rn=rn,
@@ -98,6 +86,7 @@ observations_full = Observations(
     detector_full,
     ζ=ζ,
     D=D,
+    area=aperture_area,
     times=times,
     nsubaps=1,
     dim=image_dim,
@@ -105,7 +94,18 @@ observations_full = Observations(
     verb=verb,
     FTYPE=FTYPE
 )
+# masks = [masks_full]
 # observations = [observations_full]
+masks_wfs = Masks(
+    image_dim,
+    λ,
+    nsubaps_side=nsubaps_side,
+    D_inner_frac=D_inner_frac,
+    λ_nyquist=λ_nyquist, 
+    FTYPE=FTYPE
+)
+nsubaps = masks_wfs.nsubaps
+masks_wfs.scale_psfs = masks_full.scale_psfs
 optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 detector_wfs = Detector(
     qe=qe,
@@ -127,6 +127,7 @@ observations_wfs = Observations(
     detector_wfs,
     ζ=ζ,
     D=D,
+    area=aperture_area,
     times=times,
     nsubaps=masks_wfs.nsubaps,
     nsubaps_side=nsubaps_side,
@@ -136,6 +137,9 @@ observations_wfs = Observations(
     FTYPE=FTYPE
 )
 observations = [observations_full, observations_wfs]
+masks = [masks_full, masks_wfs]
+header = create_header(λ, "unitless")
+[writefits(masks[dd].masks, "$(folder)/masks_ISH$(masks[dd].nsubaps_side)x$(masks[dd].nsubaps_side)$(id).fits", header=header) for dd=1:length(masks)]
 ###########################################
 
 ############ Object Parameters ############
@@ -144,16 +148,16 @@ objectfile = "data/OCNR2.fits"
 object_arr = repeat(block_reduce(readfits(objectfile, FTYPE=FTYPE), image_dim), 1, 1, nλ)
 ~, spectrum = solar_spectrum(λ=λ)
 mag = 4.0
-background_mag = Inf  # mag / arcsec^2
-flux = mag2flux(mag, filter, D=D, ζ=ζ, exptime=exptime)  # ph
-background_flux = mag2flux(background_mag, filter, D=D, ζ=ζ, exptime=exptime)  # ph / arcsec^2
-background_flux *= fov^2  # ph
+background_mag = 9.0  # mag / arcsec^2
+irradiance = mag2flux(mag, filter, D=D, ζ=ζ, exptime=exptime)  # ph / s / m^2
+background = mag2flux(background_mag, filter, D=D, ζ=ζ, exptime=exptime)  # ph / s / m^2 / arcsec^2
+background *= fov^2  # ph / s / m^2
 object_range = 300.0e3  # m
 ############## Create object ##############
 object = Object(
     object_arr,
-    flux=flux,
-    background_flux=background_flux,
+    irradiance=irradiance,
+    background=background,
     λ=λ,
     fov=fov,
     object_range=object_range, 
@@ -162,9 +166,9 @@ object = Object(
     verb=verb,
     FTYPE=FTYPE
 )
-header = create_header(λ, "ph/m")
+header = create_header(λ, "ph/s/m^2/m")
 writefits(object.object, "$(folder)/object_truth_spectral$(id).fits", header=header)
-header = create_header(λ, "ph")
+header = create_header(λ, "ph/s/m^2")
 writefits(dropdims(sum(object.object, dims=3), dims=3)*Δλ, "$(folder)/object_truth$(id).fits", header=header)
 ###########################################
 
@@ -223,6 +227,6 @@ writefits(atmosphere.phase, "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_ph
 ###########################################
 
 ########## Create Full-Ap images ##########
-[create_images(patches, observations[dd], atmosphere, masks[dd], object, build_dim=image_dim, noise=noise) for dd=1:length(observations)]
+[create_detector_images(patches, observations[dd], atmosphere, masks[dd], object, build_dim=image_dim, noise=noise) for dd=1:length(observations)]
 [writefits(observations[dd].images, "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_images$(id).fits", header=create_header(observations[dd])) for dd=1:length(observations)]
 ###########################################

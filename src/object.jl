@@ -10,8 +10,8 @@ function Base.display(object::T) where {T<:AbstractObject}
     println("\tSize: $(object.dim)×$(object.dim) pixels")
     println("\tFOV: $(object.fov)×$(object.fov) arcsec")
     println("\tRange: $(object.range) m")
-    println("\tFlux: $(object.flux) ph")
-    println("\tBackground flux: $(object.background_flux) ph")
+    println("\tIrradiance: $(object.irradiance) ph/s/m^2")
+    println("\tBackground Irradiance: $(object.background) ph/s/m^2")
     println("\tWavelength: $(minimum(object.λ)) — $(maximum(object.λ)) m")
     println("\tNumber of wavelengths: $(length(object.λ))")
 end
@@ -20,17 +20,18 @@ mutable struct Object{T<:AbstractFloat} <: AbstractObject
     dim::Int64
     λ::Vector{T}
     nλ::Int64
+    Δλ::T
     range::T
     fov::T
     sampling_arcsecperpix::T
     spectrum::Vector{T}
-    flux::T
-    background_flux::T
+    irradiance::T
+    background::T
     object::Array{T, 3}
     function Object(
             object_arr;
-            flux=Inf,
-            background_flux=0,
+            irradiance=Inf,
+            background=0,
             λ=[Inf], 
             dim=0, 
             fov=0,
@@ -48,9 +49,9 @@ mutable struct Object{T<:AbstractFloat} <: AbstractObject
                 object_arr[:, :, w] .*= spectrum[w]
             end
             object_arr ./= sum(object_arr)
-            object_arr .*= flux / Δλ
+            object_arr .*= irradiance / Δλ
         end
-        object = new{FTYPE}(dim, λ, nλ, object_range, fov, sampling_arcsecperpix, spectrum, flux, background_flux, object_arr)
+        object = new{FTYPE}(dim, λ, nλ, Δλ, object_range, fov, sampling_arcsecperpix, spectrum, irradiance, background, object_arr)
         if verb == true
             display(object)
         end
@@ -63,8 +64,10 @@ function mag2flux(mag, filter; D=3.6, ζ=0.0, exptime=20e-3)
     area = pi * (D/2)^2  # m^2
     airmass = secd(ζ)
     irradiance_vega = magnitude_zeropoint(filter.λ, filter.response)  # ph/s/m^2
-    radiant_energy_target = exptime * area * irradiance_vega * 10^(-(mag + 0.3*airmass) / 2.5)  # ph
-    return radiant_energy_target
+    # radiant_energy_target = exptime * area * irradiance_vega * 10^(-(mag + 0.3*airmass) / 2.5)  # ph
+    irradiance_target = irradiance_vega * 10^(-(mag + 0.3*airmass) / 2.5)  # ph/s/m^2
+    # return radiant_energy_target
+    return irradiance_target
 end
 
 function magnitude_zeropoint(λfilter, filter_response)

@@ -161,6 +161,7 @@ mutable struct Observations{T<:AbstractFloat, S<:Real} <: AbstractObservations
     detector::Detector{T, S}
     ζ::T
     D::T
+    aperture_area::T
     times::Vector{T}
     nepochs::Int64
     nsubaps::Int64
@@ -176,6 +177,7 @@ mutable struct Observations{T<:AbstractFloat, S<:Real} <: AbstractObservations
             detector;
             ζ=Inf,
             D=Inf,
+            area=pi*(D/2)^2,
             times=[],
             nepochs=0,
             nsubaps=0,
@@ -188,7 +190,7 @@ mutable struct Observations{T<:AbstractFloat, S<:Real} <: AbstractObservations
         nepochs = (nepochs==0) ? length(times) : nepochs
         DTYPE = gettypes(detector)[2]
         optics.response .*= detector.qe
-        observations = new{FTYPE, DTYPE}(optics, ϕ_static, detector, ζ, D, times, nepochs, nsubaps, nsubaps_side, dim)
+        observations = new{FTYPE, DTYPE}(optics, ϕ_static, detector, ζ, D, area, times, nepochs, nsubaps, nsubaps_side, dim)
         if verb == true
             display(observations)
         end

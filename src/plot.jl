@@ -27,12 +27,12 @@ mutable struct ReconstructionFigures
     end
 end
 
-function plot_object(object; show=true, write=false, filename="", label="Flux [ph/m]")
+function plot_object(object; show=true, write=false, filename="", label="Irradiance [ph/s/m^2]")
     fig = Figure(size=(600, 600))
     ax = Axis(fig[1, 1], titlesize=18, aspect=DataAspect())
-    ax.title = "Object [sum]"
+    ax.title = "Object [integrated]"
     hidedecorations!(ax)
-    obs = Observable(rotr90(dropdims(sum(object.object, dims=3), dims=3)))
+    obs = Observable(rotr90(object.Δλ*dropdims(sum(object.object, dims=3), dims=3)))
     plt = plot!(ax, obs, colormap=PLOT_OPTIONS[:CMAP_OBJECT])
     c = Colorbar(fig[1, 2], plt, width=10, height=Relative(1), label=label, labelsize=16, ticklabelsize=16)
     trim!(fig.layout)
@@ -53,7 +53,7 @@ function plot_opd(atmosphere; show=false, write=false, filename="", label="OPD [
     ax = [Axis(fig[1, 2*l], titlesize=18, aspect=DataAspect()) for l=1:atmosphere.nlayers]
     [ax[l].title = "Layer $(l) - $(label)" for l=1:atmosphere.nlayers]
     hidedecorations!.(ax)
-    obs = [Observable(rotr90(atmosphere.opd[:, :, l])) for l=1:atmosphere.nlayers]
+    obs = [Observable(rotr90(atmosphere.opd[:, :, l] .* 1e9)) for l=1:atmosphere.nlayers]
     plt = [plot!(ax[l], obs[l], colormap=PLOT_OPTIONS[:CMAP_WAVEFRONT]) for l=1:atmosphere.nlayers]
     [Colorbar(fig[1, 2*l+1], plt[l], width=10, height=Relative(3/4), labelsize=16, ticklabelsize=16) for l=1:atmosphere.nlayers]
     trim!(fig.layout)
@@ -144,7 +144,7 @@ end
 function update_opd_figure(opd, atmosphere, reconstruction)
     figs = reconstruction.figures
     for l=1:atmosphere.nlayers
-        figs.wf_obs[l][] = rotr90(opd[:, :, l])
+        figs.wf_obs[l][] = rotr90(opd[:, :, l] .* 1e9)
         reset_limits!(figs.wf_ax[l])
     end
 end
