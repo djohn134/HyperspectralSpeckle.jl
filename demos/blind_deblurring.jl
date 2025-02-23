@@ -37,9 +37,14 @@ patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FT
 
 ### Detector & Observations Parameters ####
 D = 3.6  # m
-fov = 50.0
+D_inner_frac = 0.5
+aperture_area = pi * (D / 2)^2 * (1 - D_inner_frac^2)
+fov = 10.0
 pixscale_full = fov / image_dim
 pixscale_wfs = pixscale_full .* nsubaps_side
+DTYPE = UInt16
+saturation = 30000.0  # e⁻
+gain = saturation / (typemax(DTYPE))  # e⁻ / ADU
 qefile = "data/qe/prime-95b_qe.dat"
 ~, qe = readqe(qefile, λ=λ)
 # qe = ones(FTYPE, nλ)
@@ -58,6 +63,7 @@ images_full, ~, nepochs, image_dim, exptime_full, times_full = readimages(datafi
 detector_full = Detector(
     qe=qe,
     rn=rn,
+    gain=gain,
     pixscale=pixscale_full,
     λ=λ,
     λ_nyquist=λ_nyquist,
@@ -74,6 +80,7 @@ observations_full = Observations(
     detector_full,
     ζ=ζ,
     D=D,
+    area=aperture_area,
     ϕ_static=ϕ_static_full,
     verb=verb,
     FTYPE=FTYPE
@@ -85,6 +92,7 @@ optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 detector_wfs = Detector(
     qe=qe,
     rn=rn,
+    gain=gain,
     pixscale=pixscale_wfs,
     λ=λ,
     λ_nyquist=λ_nyquist,
@@ -101,20 +109,22 @@ observations_wfs = Observations(
     detector_wfs,
     ζ=ζ,
     D=D,
+    area=aperture_area,
     nsubaps_side=nsubaps_side,
     ϕ_static=ϕ_static_wfs,
     verb=verb,
     FTYPE=FTYPE
 )
 observations = [observations_wfs, observations_full]
-background_flux = 0.0 * mean(fit_background(observations_full))
+background = 0.0 * mean(fit_background(observations_full))
 ###########################################
 
 ########## Create Full-Ap Masks ###########
 masks_full = Masks(
     image_dim,
     λ,
-    nsubaps_side=1,  
+    nsubaps_side=1, 
+    D_inner_frac=D_inner_frac,  
     λ_nyquist=λ_nyquist, 
     verb=verb,
     FTYPE=FTYPE
@@ -124,6 +134,7 @@ masks_wfs = Masks(
     image_dim,
     λ,
     nsubaps_side=nsubaps_side,
+    D_inner_frac=D_inner_frac, 
     λ_nyquist=λ_nyquist, 
     verb=verb,
     FTYPE=FTYPE
@@ -136,10 +147,11 @@ masks = [masks_wfs, masks_full]
 ############ Object Parameters ############
 object_range = 300.0e3  # km
 ############## Create object ##############
-# object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background_flux/observations_full.dim^2, 0)
+# object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background/observations_full.dim^2, 0)
 # object_arr = repeat(object_arr, 1, 1, nλ)
 # object_arr ./= sum(object_arr)
-# object_arr .*= mean(sum(observations_full.images, dims=(1, 2, 3))) - background_flux
+# object_arr .*= (mean(sum(observations_full.images, dims=(1, 2, 3))) - background)
+# object_arr .*= observations_full.detector.gain / (observations_full.detector.exptime * observations_full.aperture_area)
 object_arr = readfits("$(folder)/object_recon.fits")
 # object_arr = readfits("$(folder)/object_truth.fits")
 # object_arr = zeros(FTYPE, image_dim, image_dim, nλ)
@@ -150,7 +162,7 @@ object = Object(
     object_range=object_range, 
     fov=fov,
     dim=observations_full.dim,
-    background_flux=background_flux,
+    background=background,
     spectrum=spectrum,
     scaled=true,
     FTYPE=FTYPE,

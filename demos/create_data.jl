@@ -29,7 +29,7 @@ resolution = mean(λ) / Δλ
 D = 3.6  # m
 D_inner_frac = 0.5
 aperture_area = pi * (D / 2)^2 * (1 - D_inner_frac^2)
-fov = 50.0  # arcsec
+fov = 10.0  # arcsec
 pixscale_full = fov / image_dim  # arcsec/pix
 pixscale_wfs = pixscale_full .* nsubaps_side  # arcsec/pix
 DTYPE = UInt16
@@ -43,9 +43,9 @@ saturation = 30000.0  # e⁻
 gain = saturation / (typemax(DTYPE))  # e⁻ / ADU
 # gain = 1.0  # e⁻ / ADU
 exptime = 5e-3  # sec
-nepochs = 1
-# times = collect(0:nepochs-1) .* exptime
-times = [0.0]
+nepochs = 33
+times = collect(0:nepochs-1) .* exptime
+# times = [0.0]
 noise = true
 ζ = 0.0  # deg
 ########## Create Optical System ##########
@@ -148,7 +148,7 @@ objectfile = "data/OCNR2.fits"
 object_arr = repeat(block_reduce(readfits(objectfile, FTYPE=FTYPE), image_dim), 1, 1, nλ)
 ~, spectrum = solar_spectrum(λ=λ)
 mag = 4.0
-background_mag = 9.0  # mag / arcsec^2
+background_mag = Inf  # mag / arcsec^2
 irradiance = mag2flux(mag, filter, D=D, ζ=ζ, exptime=exptime)  # ph / s / m^2
 background = mag2flux(background_mag, filter, D=D, ζ=ζ, exptime=exptime)  # ph / s / m^2 / arcsec^2
 background *= fov^2  # ph / s / m^2
@@ -173,7 +173,7 @@ writefits(dropdims(sum(object.object, dims=3), dims=3)*Δλ, "$(folder)/object_t
 ###########################################
 
 ########## Anisopatch Parameters ##########
-isoplanatic = false
+isoplanatic = true
 patch_dim = 64
 ###### Create Anisoplanatic Patches #######
 patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FTYPE=FTYPE)
