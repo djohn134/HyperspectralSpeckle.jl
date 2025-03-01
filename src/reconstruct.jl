@@ -330,15 +330,18 @@ function reconstruct!(reconstruction, observations, atmosphere, object, masks, p
             preconvolve_object(reconstruction, patches, object)
 
             if reconstruction.verb_levels["vm"] == true
-                print("Bootstrap Iter: $(b) MFBD Iter: $(current_iter) ")
+                print("Bootstrap Iter: $(b)/$(reconstruction.niter_boot)\tMFBD Iter: $(current_iter)/$(reconstruction.niter_mfbd) ")
                 if reconstruction.smoothing == true
-                    print("FWHM: $(reconstruction.fwhm_schedule(absolute_iter)) ")
+                    print("\tFWHM:$(reconstruction.fwhm_schedule(absolute_iter)) ")
                 end
             end
 
             ## Reconstruct complex pupil
             if reconstruction.verb_levels["vm"] == true
                 print("--> Reconstructing complex pupil ")
+                if reconstruction.verb_levels["vo"] == true
+                    println()
+                end
             end
 
             ## Reconstruct Phase
@@ -351,6 +354,9 @@ function reconstruct!(reconstruction, observations, atmosphere, object, masks, p
             ## Reconstruct Object
             if reconstruction.verb_levels["vm"] == true
                 print("--> object ")
+                if reconstruction.verb_levels["vo"] == true
+                    println()
+                end
             end
 
             crit_obj = (x, g) -> reconstruction.fg_object(x, g,  current_observations, atmosphere, current_masks, patches, reconstruction, object)
@@ -361,7 +367,7 @@ function reconstruct!(reconstruction, observations, atmosphere, object, masks, p
 
             ## Compute final criterion
             if reconstruction.verb_levels["vm"] == true
-                print("--> ϵ:\t$(reconstruction.ϵ)\n")
+                println("--> ϵ:\t$(reconstruction.ϵ)")
             end
 
             if write == true
@@ -502,9 +508,7 @@ end
 end
 
 @views function preconvolve_smoothing(reconstruction)
-    FTYPE = gettype(reconstruction)
     helpers = reconstruction.helpers
-
     for tid=1:Threads.nthreads()
         if reconstruction.smoothing == true
             helpers.smooth[tid] = preconvolve(fftshift(helpers.smoothing_kernel))

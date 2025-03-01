@@ -37,7 +37,7 @@ patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FT
 
 ### Detector & Observations Parameters ####
 D = 3.6  # m
-D_inner_frac = 0.5
+D_inner_frac = 0.0
 aperture_area = pi * (D / 2)^2 * (1 - D_inner_frac^2)
 fov = 10.0
 pixscale_full = fov / image_dim
@@ -47,18 +47,15 @@ saturation = 30000.0  # e⁻
 gain = saturation / (typemax(DTYPE))  # e⁻ / ADU
 qefile = "data/qe/prime-95b_qe.dat"
 ~, qe = readqe(qefile, λ=λ)
-# qe = ones(FTYPE, nλ)
 rn = 2.0
 exptime = 5e-3
 ζ = 0.0
 ########## Create Optical System ##########
 filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
-# filter = OpticalElement(λ=[0.0, 10000.0], response=[1.0, 1.0], FTYPE=FTYPE)
-beamsplitter = OpticalElement(λ=[0.0, 10000.0], response=[0.5, 0.5], FTYPE=FTYPE)
+beamsplitter = OpticalElement(λ=[400.0e-9, 1000.0e-9], response=[0.5, 0.5], FTYPE=FTYPE)
 optics_full = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
-# optics_full = OpticalSystem([filter], λ, verb=verb, FTYPE=FTYPE)
 ######### Create Full-Ap Detector #########
-datafile = "$(folder)/Dr0_20_ISH1x1_images.fits"
+datafile = "$(folder)/Dr0_40_ISH1x1_images.fits"
 images_full, ~, nepochs, image_dim, exptime_full, times_full = readimages(datafile, FTYPE=FTYPE)
 detector_full = Detector(
     qe=qe,
@@ -85,37 +82,37 @@ observations_full = Observations(
     verb=verb,
     FTYPE=FTYPE
 )
-# observations = [observations_full]
-datafile = "$(folder)/Dr0_20_ISH$(nsubaps_side)x$(nsubaps_side)_images.fits"
-images_wfs, nsubaps, ~, wfs_dim, exptime_wfs, times_wfs = readimages(datafile, FTYPE=FTYPE)
-optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
-detector_wfs = Detector(
-    qe=qe,
-    rn=rn,
-    gain=gain,
-    pixscale=pixscale_wfs,
-    λ=λ,
-    λ_nyquist=λ_nyquist,
-    exptime=exptime_wfs,
-    verb=verb,
-    FTYPE=FTYPE
-)
-### Create Full-Ap Observations object ####
-ϕ_static_wfs = zeros(FTYPE, image_dim, image_dim, nλ)
-observations_wfs = Observations(
-    times_wfs,
-    images_wfs,
-    optics_wfs,
-    detector_wfs,
-    ζ=ζ,
-    D=D,
-    area=aperture_area,
-    nsubaps_side=nsubaps_side,
-    ϕ_static=ϕ_static_wfs,
-    verb=verb,
-    FTYPE=FTYPE
-)
-observations = [observations_wfs, observations_full]
+observations = [observations_full]
+# datafile = "$(folder)/Dr0_80_ISH$(nsubaps_side)x$(nsubaps_side)_images.fits"
+# images_wfs, nsubaps, ~, wfs_dim, exptime_wfs, times_wfs = readimages(datafile, FTYPE=FTYPE)
+# optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
+# detector_wfs = Detector(
+#     qe=qe,
+#     rn=rn,
+#     gain=gain,
+#     pixscale=pixscale_wfs,
+#     λ=λ,
+#     λ_nyquist=λ_nyquist,
+#     exptime=exptime_wfs,
+#     verb=verb,
+#     FTYPE=FTYPE
+# )
+# ### Create Full-Ap Observations object ####
+# ϕ_static_wfs = zeros(FTYPE, image_dim, image_dim, nλ)
+# observations_wfs = Observations(
+#     times_wfs,
+#     images_wfs,
+#     optics_wfs,
+#     detector_wfs,
+#     ζ=ζ,
+#     D=D,
+#     area=aperture_area,
+#     nsubaps_side=nsubaps_side,
+#     ϕ_static=ϕ_static_wfs,
+#     verb=verb,
+#     FTYPE=FTYPE
+# )
+# observations = [observations_wfs, observations_full]
 background = 0.0 * mean(fit_background(observations_full))
 ###########################################
 
@@ -147,14 +144,11 @@ masks = [masks_wfs, masks_full]
 ############ Object Parameters ############
 object_range = 300.0e3  # km
 ############## Create object ##############
-# object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background/observations_full.dim^2, 0)
-# object_arr = repeat(object_arr, 1, 1, nλ)
-# object_arr ./= sum(object_arr)
-# object_arr .*= (mean(sum(observations_full.images, dims=(1, 2, 3))) - background)
-# object_arr .*= observations_full.detector.gain / (observations_full.detector.exptime * observations_full.aperture_area)
-object_arr = readfits("$(folder)/object_recon.fits")
-# object_arr = readfits("$(folder)/object_truth.fits")
-# object_arr = zeros(FTYPE, image_dim, image_dim, nλ)
+object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background/observations_full.dim^2, 0)
+object_arr = repeat(object_arr, 1, 1, nλ)
+object_arr ./= sum(object_arr)
+object_arr .*= (mean(sum(observations_full.images, dims=(1, 2, 3))) - background)
+# object_arr = readfits("$(folder)/object_recon.fits")
 ~, spectrum = solar_spectrum(λ=λ)
 object = Object(
     object_arr,
@@ -170,19 +164,17 @@ object = Object(
 )
 ###########################################
 
-
 ########## Atmosphere Parameters ##########
-heights = [0.0, 7000.0, 12500.0]
+heights = [0.0]#, 7000.0, 12500.0]
 wind_speed = wind_profile_roberts2011(heights, ζ)
-heights .*= 0.0
-wind_direction = [45.0, 125.0, 135.0]
+# heights .*= 0.0
+wind_direction = [45.0]#, 125.0, 135.0]
 wind = [wind_speed wind_direction]
 nlayers = length(heights)
 scaleby_wavelength = λ_nyquist ./ λ
 sampling_nyquist_mperpix = layer_nyquist_sampling_mperpix(D, image_dim, nlayers)
 sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heights, image_dim)
 ~, transmission = readtransmission("data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
-# transmission = ones(FTYPE, nλ)
 ############ Create Atmosphere ############
 atmosphere = Atmosphere(
     λ,
@@ -192,6 +184,7 @@ atmosphere = Atmosphere(
     patches,
     wind=wind, 
     heights=heights,
+    transmission=transmission,
     sampling_nyquist_mperpix=sampling_nyquist_mperpix,
     sampling_nyquist_arcsecperpix=sampling_nyquist_arcsecperpix,
     λ_nyquist=λ_nyquist,
@@ -202,8 +195,10 @@ atmosphere = Atmosphere(
 )
 ######### Set phase screens start #########
 # atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
-atmosphere.phase = readfits("$(folder)/phase_recon.fits")
+atmosphere.phase = readfits("$(folder)/Dr0_40_phase_full.fits")
 ###########################################
+object.object .*= observations_full.detector.gain / (observations_full.detector.exptime * observations_full.aperture_area * mean(observations_full.optics.response) * mean(atmosphere.transmission))
+object.background *= observations_full.detector.gain / (observations_full.detector.exptime * observations_full.aperture_area * mean(observations_full.optics.response) * mean(atmosphere.transmission))
 
 ######### Reconstruction Object ###########
 reconstruction = Reconstruction(
@@ -215,15 +210,15 @@ reconstruction = Reconstruction(
     λmax=λmax,
     nλ=nλ,
     nλint=nλint,
-    niter_mfbd=10,
-    maxiter=10,
-    indx_boot=[1:2],
+    niter_mfbd=1,
+    maxiter=1000,
+    # indx_boot=[1:2],
     wavefront_parameter=:phase,
     minimization_scheme=:mle,
-    noise_model=:mixed,
-    maxeval=Dict("wf"=>1000, "object"=>1000),
-    smoothing=true,
-    fwhm_schedule=ConstantSchedule(0.5),
+    noise_model=:gaussian,
+    maxeval=Dict("wf"=>1, "object"=>10000),
+    smoothing=false,
+    # fwhm_schedule=ConstantSchedule(0.5),
     build_dim=image_dim,
     verb=verb,
     plot=plot,

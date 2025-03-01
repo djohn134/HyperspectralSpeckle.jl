@@ -202,7 +202,7 @@ end
 
     pupil2psf!(psf_temp, psf_temp, masks, P, p, A, ϕ_composite, scale_psfs, iffts, refraction)
     psf .= psf_temp ./ nλint
-    
+
     object_patch .= patch_weight .* object
     conv!(image_big_temp, object_patch, psf)
     block_reduce!(image_small_temp, image_big_temp)

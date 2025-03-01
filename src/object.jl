@@ -59,9 +59,8 @@ mutable struct Object{T<:AbstractFloat} <: AbstractObject
     end
 end
 
-function mag2flux(mag, filter; D=3.6, ζ=0.0, exptime=20e-3)
+function mag2flux(mag, filter; ζ=0.0)
     ## Flux at top of atmosphere
-    area = pi * (D/2)^2  # m^2
     airmass = secd(ζ)
     irradiance_vega = magnitude_zeropoint(filter.λ, filter.response)  # ph/s/m^2
     # radiant_energy_target = exptime * area * irradiance_vega * 10^(-(mag + 0.3*airmass) / 2.5)  # ph
