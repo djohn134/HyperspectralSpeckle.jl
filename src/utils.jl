@@ -13,7 +13,7 @@ function gettypes(T)
     return typeof(T).parameters
 end
 
-function create_header(λ::AbstractVector{<:AbstractFloat}, units::String)
+function create_header(λ::AbstractVector{<:AbstractFloat}; units::String="unitless")
     λmin = minimum(λ)
     λmax = maximum(λ)
     nλ = length(λ)

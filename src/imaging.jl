@@ -79,7 +79,9 @@ function pupil2psf!(psf, psf_temp, mask, P, p, A, ϕ, scale_psf, ifft_prealloc!:
     P .= mask .* scale_psf .* A .* cis.(ϕ)
     ifft_prealloc!(p, P)
     psf_temp .= abs2.(p)
-    mul!(psf, refraction, psf_temp)  
+    fftshift!(psf, psf_temp)
+    mul!(psf_temp, refraction, psf)
+    fftshift!(psf, psf_temp)
 end
 
 function add_noise!(image, rn, poisson::Bool; FTYPE=Float64)
@@ -200,8 +202,8 @@ end
     smoothing!(ϕ_composite, ϕ_composite)
     ϕ_composite .+= phase_static
 
-    pupil2psf!(psf_temp, psf_temp, masks, P, p, A, ϕ_composite, scale_psfs, iffts, refraction)
-    psf .= psf_temp ./ nλint
+    pupil2psf!(psf, psf_temp, masks, P, p, A, ϕ_composite, scale_psfs, iffts, refraction)
+    psf ./= nλint
 
     object_patch .= patch_weight .* object
     conv!(image_big_temp, object_patch, psf)

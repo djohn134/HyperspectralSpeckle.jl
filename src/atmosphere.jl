@@ -174,17 +174,6 @@ function layer_scale_factors(layer_heights, object_height)
     return 1 .- layer_heights ./ object_height
 end
 
-# function calculate_screen_size!(atmosphere, observations; verb=true)
-#     Δpos_meters = observations.detector.exptime .* [atmosphere.wind[:, 1].*sind.(atmosphere.wind[:, 2]) atmosphere.wind[:, 1].*cosd.(atmosphere.wind[:, 2])]'
-#     Δpos_pix = Δpos_meters ./ minimum(atmosphere.sampling_nyquist_mperpix)
-#     Δpos_pix_total = Δpos_pix .* (observations.nepochs - 1)
-#     Δpix_refraction = maximum(abs.(refraction_at_layer_pix(atmosphere, observations)))
-#     atmosphere.dim = nextprod((2, 3, 5, 7), maximum(ceil.(abs.(Δpos_pix_total))) + observations.dim + Δpix_refraction)
-#     if verb == true
-#         println("\tSize: $(atmosphere.dim)×$(atmosphere.dim) pixels")
-#     end
-# end
-
 function calculate_screen_size!(atmosphere, observations, object, patches; verb=true)
     ndatasets = length(observations)
     mint = minimum([minimum(observation.times) for observation in observations])
