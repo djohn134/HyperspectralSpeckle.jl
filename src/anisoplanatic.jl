@@ -1,12 +1,4 @@
-abstract type AbstractPatches end
-function Base.display(patches::T) where {T<:AbstractPatches}
-    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Anisoplanatic Patches\n"); print(Crayon(reset=true))
-    println("\tSize: $(patches.dim)×$(patches.dim) pixels")
-    println("\tOverlap: $(patches.overlap)")
-    println("\tNumber of patches: $(Int(sqrt(patches.npatches)))×$(Int(sqrt(patches.npatches))) patches")
-end
-
-mutable struct AnisoplanaticPatches{T<:AbstractFloat}  <: AbstractPatches # Structure to store isoplanatic patch info
+mutable struct AnisoplanaticPatches{T<:AbstractFloat}  # Structure to store isoplanatic patch info
     npatches::Int64  # Number of patches per image side length, e.g. 7x7 patches per images -> npatches_per_image_side = 7
     dim::Int64      # Patch width, e.g. 64x64 pixel patch -> npix_isopatch_width = 64
     overlap::T         # Percentage of window patch overlap, e.g. 50% overlap -> patch_overlap = 0.5

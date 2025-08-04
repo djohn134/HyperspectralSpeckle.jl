@@ -1,16 +1,8 @@
 using FITSIO
 using Crayons
 
-abstract type AbstractMasks end
-function Base.display(masks::T) where {T<:AbstractMasks}
-    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Masks\n"); print(Crayon(reset=true))
-    println("\tSize: $(masks.dim)×$(masks.dim) pixels")
-    println("\tConfiguration: $(masks.nsubaps_side)×$(masks.nsubaps_side) subapertures")
-    println("\tWavelength: $(minimum(masks.λ)) — $(maximum(masks.λ)) m")
-    println("\tNumber of wavelengths: $(length(masks.λ)) wavelengths")
-end
 
-mutable struct Masks{T<:AbstractFloat} <: AbstractMasks
+mutable struct Masks{T<:AbstractFloat}
     masks::Array{T, 4}
     dim::Int64
     λ::Vector{T}

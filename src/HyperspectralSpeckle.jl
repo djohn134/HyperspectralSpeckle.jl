@@ -79,8 +79,10 @@ export gettype, create_header, writefits, writefile, writeobject, readobject, re
 export gaussian_kernel, calculate_entropy, calculate_ssim, shift_and_add, fit_plane, crop, smooth_to_rmse!, bartlett_hann2d, super_gaussian, block_reduce!, block_reduce, block_replicate!, block_replicate, stack2mosaic, create_zernike_screen, smooth_to_resolution, interpolate1d, center_of_gravity
 export setup_fft, setup_ifft, setup_conv, preconvolve, setup_corr, precorrelate, setup_autocorr, setup_operator_mul
 
-## TOP SECRET!
+## logos
 include("logos.jl")
 export show_the_sausage, show_the_satellite
+
+include("prints.jl")
 
 end

@@ -10,25 +10,6 @@ const VERB_LEVELS = Dict(
     "silent"=>Dict("vm"=>false, "vo"=>false)  # Print nothing
 )
 
-abstract type AbstractReconstruction end
-function Base.display(reconstruction::T) where {T<:AbstractReconstruction}
-    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Reconstruction\n"); print(Crayon(reset=true))
-    println("\tImage build size: $(reconstruction.build_dim)×$(reconstruction.build_dim) pixels")
-    println("\tWavelength: $(minimum(reconstruction.λ)) — $(maximum(reconstruction.λ)) m")
-    println("\tNumber of wavelength: $(reconstruction.nλ)")
-    println("\tNumber of integrated wavelengths: $(reconstruction.nλint)")
-    println("\tNumber of data channels: $(reconstruction.ndatasets)")
-    println("\tWavefront Parameter: $(symbol2str[reconstruction.wavefront_parameter])")
-    println("\tNoise weighting: $(reconstruction.weight_function)")
-    println("\tObject gradient function: $(reconstruction.gradient_object)")
-    println("\tWavefront gradient function: $(reconstruction.gradient_wf)")
-    println("\tNumber of MFBD cycles: $(reconstruction.niter_mfbd)")
-    println("\tMax iterations: $(reconstruction.maxiter)") 
-    println("\tMax evaluations: $(reconstruction.maxeval["wf"]) (wf), $(reconstruction.maxeval["object"]) (object)")
-    println("\tSmoothing: $(reconstruction.smoothing) (schedule: $(reconstruction.fwhm_schedule), Max FWHM: $(reconstruction.maxFWHM), Min FWHM: $(reconstruction.minFWHM))")
-    println("\tStopping criteria: $(reconstruction.grtol) (grtol), $(reconstruction.frtol) (frtol), $(reconstruction.xrtol) (xrtol)")
-end
-
 function ConstantSchedule(fwhm)
     function constant(x)
         return fwhm
@@ -181,7 +162,7 @@ mutable struct Helpers{T<:AbstractFloat}
     end
 end
 
-mutable struct Reconstruction{T<:AbstractFloat} <: AbstractReconstruction
+mutable struct Reconstruction{T<:AbstractFloat}
     λ::Vector{T}
     λtotal::Vector{T}
     nλ::Int64

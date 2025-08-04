@@ -23,37 +23,6 @@ const ELEMENT_FILENAMES = Dict(
     "Thorlabs:DMLP805P-reflected"=>"data/optics/DMLP805-reflected.dat",
 )
 
-abstract type AbstractDetector end
-abstract type AbstractOpticalSystem end
-abstract type AbstractObservations end
-function Base.display(detector::T) where {T<:AbstractDetector}
-    DTYPE = gettypes(detector)[end]
-    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Detector\n"); print(Crayon(reset=true))
-    println("\tBit Depth: $(DTYPE)")
-    println("\tRN: $(detector.rn) e⁻")
-    println("\tGain: $(detector.gain) e⁻/ADU")
-    println("\tSaturation: $(detector.saturation) e⁻")
-    println("\tExposure time: $(detector.exptime) s")
-    println("\tPlate Scale: $(detector.pixscale) arcsec/pix")
-    println("\tWavelength: $(minimum(detector.λ)) — $(maximum(detector.λ)) m")
-    println("\tNyquist sampled wavelength: $(detector.λ_nyquist) m")
-end
-
-function Base.display(optical_system::T) where {T<:AbstractOpticalSystem}
-    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Optical system\n"); print(Crayon(reset=true))
-    println("\tNumber of elements: $(length(optical_system.elements))")
-    println("\tWavelength: $(minimum(optical_system.λ)) — $(maximum(optical_system.λ)) m")
-end
-
-function Base.display(observations::T) where {T<:AbstractObservations}
-    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Observations\n"); print(Crayon(reset=true))
-    println("\tImage Size: $(observations.dim)×$(observations.dim) pixels")
-    println("\tNumber of frames: $(observations.nepochs)")
-    println("\tNumber of subapertures: $(observations.nsubaps_side)×$(observations.nsubaps_side) subapertures")
-    println("\tTelescope Diameter: $(observations.D) m")
-    println("\tZenith angle: $(observations.ζ) deg")
-end
-
 struct OpticalElement{T<:AbstractFloat}
     name::String
     λ::Vector{T}
@@ -94,7 +63,7 @@ struct OpticalElement{T<:AbstractFloat}
     end
 end
 
-struct Detector{T<:AbstractFloat, S<:Real} <: AbstractDetector
+struct Detector{T<:AbstractFloat, S<:Real}
     λ::Vector{T}
     λ_nyquist::T
     qe::Vector{T}
@@ -124,7 +93,7 @@ struct Detector{T<:AbstractFloat, S<:Real} <: AbstractDetector
     end
 end
 
-struct OpticalSystem{T<:AbstractFloat} <: AbstractOpticalSystem
+struct OpticalSystem{T<:AbstractFloat}
     elements::Vector{OpticalElement{T}}
     λ::Vector{T}
     response::Vector{T}
@@ -155,7 +124,7 @@ struct OpticalSystem{T<:AbstractFloat} <: AbstractOpticalSystem
     end
 end
 
-mutable struct Observations{T<:AbstractFloat, S<:Real} <: AbstractObservations
+mutable struct Observations{T<:AbstractFloat, S<:Real}
     optics::OpticalSystem{T}
     phase_static::Array{T, 3}
     detector::Detector{T, S}
@@ -223,10 +192,11 @@ end
 
 @views function calculate_wfs_slopes(observations_wfs)
     FTYPE = gettype(observations_wfs)
-    ~, ~, nsubaps, nepochs = size(observations_wfs.images)
+    nsubaps = observations_wfs.nsubaps
+    nepochs = observations_wfs.nepochs
     ∇ϕx = zeros(FTYPE, nsubaps, nepochs)
     ∇ϕy = zeros(FTYPE, nsubaps, nepochs)
-    composite_image = dropdims(sum(observations_wfs.images, dims=(3, 4)), dims=(3, 4))
+    # composite_image = dropdims(sum(observations_wfs.images, dims=(3, 4)), dims=(3, 4))
     for n=1:nsubaps
         for t=1:nepochs
             # Δy, Δx = Tuple(argmax(ccorr_psf(composite_image, observations_wfs.images[:, :, n, t])))

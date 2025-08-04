@@ -6,24 +6,7 @@ using LinearInterpolators
 import Interpolations: interpolate, Gridded, Linear
 
 
-abstract type AbstractAtmosphere end
-
-function Base.display(atmosphere::T) where {T<:AbstractAtmosphere}
-    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Atmosphere\n"); print(Crayon(reset=true))
-    println("\tNumber of layers: $(atmosphere.nlayers) layers")
-    println("\tWind speed: $(atmosphere.wind[:, 1]) m/s")
-    println("\tWind direction: $(atmosphere.wind[:, 2]) deg")
-    println("\tInner scale: $(atmosphere.l0) m")
-    println("\tOuter scale: $(atmosphere.L0) m")
-    println("\tLayer Heights: $(atmosphere.heights) m")
-    println("\tFried paremeter: $(atmosphere.r0) m")
-    println("\tReference wavelength: $(atmosphere.λ_ref) nm")
-    println("\tWavelength: $(minimum(atmosphere.λ)) — $(maximum(atmosphere.λ)) m")
-    println("\tNumber of wavelengths: $(length(atmosphere.λ)) wavelengths")
-    println("\tPropagate: $(atmosphere.propagate)")
-end
-
-mutable struct Atmosphere{T<:AbstractFloat} <: AbstractAtmosphere
+mutable struct Atmosphere{T<:AbstractFloat}
     nlayers::Int64
     l0::T
     L0::T

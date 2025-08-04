@@ -533,7 +533,7 @@ function calculate_ssim(x, y)
     return ssim
 end
 
-@views function stack2mosaic(stack::AbstractVector{<:AbstractFloat}, nside, ix)
+@views function stack2mosaic(stack::AbstractVector{<:Number}, nside, ix)
     ## 1d vec of numbers to 2d image
     FTYPE = eltype(stack)
     mosaic = zeros(FTYPE, nside, nside)
@@ -551,7 +551,7 @@ end
     return mosaic
 end
 
-@views function stack2mosaic(stack::AbstractArray{<:AbstractFloat, 3}, nside, ix)
+@views function stack2mosaic(stack::AbstractArray{<:Number, 3}, nside, ix)
     ## 3d stack of images to 2d mosaic image
     FTYPE = eltype(stack)
     dim = size(stack, 1)

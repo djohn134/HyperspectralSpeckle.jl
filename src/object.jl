@@ -4,19 +4,7 @@ using NumericalIntegration
 using Interpolations: interpolate, Gridded, Linear
 
 
-abstract type AbstractObject end
-function Base.display(object::T) where {T<:AbstractObject}
-    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Object\n"); print(Crayon(reset=true))
-    println("\tSize: $(object.dim)×$(object.dim) pixels")
-    println("\tFOV: $(object.fov)×$(object.fov) arcsec")
-    println("\tRange: $(object.range) m")
-    println("\tIrradiance: $(object.irradiance) ph/s/m^2")
-    println("\tBackground Irradiance: $(object.background) ph/s/m^2")
-    println("\tWavelength: $(minimum(object.λ)) — $(maximum(object.λ)) m")
-    println("\tNumber of wavelengths: $(length(object.λ))")
-end
-
-mutable struct Object{T<:AbstractFloat} <: AbstractObject
+mutable struct Object{T<:AbstractFloat}
     dim::Int64
     λ::Vector{T}
     nλ::Int64
