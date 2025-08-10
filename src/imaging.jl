@@ -142,7 +142,7 @@ end
     DTYPE = gettypes(observations.detector)[end]
     image_small_temp = zeros(FTYPE, observations.dim, observations.dim, nthreads)
     refraction = [create_refraction_operator(atmosphere.λ[w], atmosphere.λ_ref, observations.ζ, observations.detector.pixscale, build_dim, FTYPE=FTYPE) for w=1:atmosphere.nλ]
-    extractors = create_patch_extractors(patches, atmosphere, observations, object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
+    extractors = create_patch_extractors(patches, atmosphere, observations, object, scaleby_wavelength, scaleby_height, build_dim=build_dim)    
     images_float = zeros(FTYPE, observations.dim, observations.dim, nthreads)
     observations.images = zeros(DTYPE, observations.dim, observations.dim, observations.nsubaps, observations.nepochs)
     create_detector_images!(patches, observations, atmosphere, masks, object, images_float, image_small_temp, image_big_temp, psfs, psf_temp, object_patch, A, P, p, refraction, iffts, convs, ϕ_composite, ϕ_slices, extractors, noise=noise)
@@ -152,11 +152,16 @@ end
     FTYPE = gettype(observations)
     nλint = 1
     smoothing!(out, in) = nothing
-    prog = Progress(observations.nepochs*observations.nsubaps)
+    prog = Progress(observations.nepochs*observations.nsubexp*observations.nsubaps)
     Threads.@threads :static for t=1:observations.nepochs
         tid = Threads.threadid()
         for n=1:observations.nsubaps
-            create_radiant_energy_pre_detector!(images_float[:, :, tid], image_small_temp[:, :, tid], image_big_temp[:, :, tid], psf[:, :, tid], psf_temp[:, :, tid], masks.scale_psfs, object.object, patches.w, object_patch[:, :, tid], observations.aperture_area, observations.detector.exptime, masks.masks[:, :, n, :], A[:, :, tid], P[:, :, tid], p[:, :, tid], refraction, iffts[tid], convs[tid], object.background / observations.dim^2 / observations.nsubaps, atmosphere.transmission, observations.optics.response, ϕ_composite[:, :, tid], observations.phase_static, ϕ_slices[:, :, tid], atmosphere.phase, smoothing!, atmosphere.nlayers, extractors[t, :, :, :], atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, atmosphere.nλ, nλint, atmosphere.Δλ)
+            fill!(images_float[:, :, tid], zero(FTYPE))
+            for tsub=1:observations.nsubexp 
+                create_radiant_energy_pre_detector!(images_float[:, :, tid], image_small_temp[:, :, tid], image_big_temp[:, :, tid], psf[:, :, tid], psf_temp[:, :, tid], masks.scale_psfs, object.object, patches.w, object_patch[:, :, tid], observations.aperture_area, observations.detector.exptime / observations.nsubexp, masks.masks[:, :, n, :], A[:, :, tid], P[:, :, tid], p[:, :, tid], refraction, iffts[tid], convs[tid], object.background / observations.dim^2 / observations.nsubaps, atmosphere.transmission, observations.optics.response, ϕ_composite[:, :, tid], observations.phase_static, ϕ_slices[:, :, tid], atmosphere.phase, smoothing!, atmosphere.nlayers, extractors[(t-1)*observations.nsubexp + tsub, :, :, :], atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, atmosphere.nλ, nλint, atmosphere.Δλ)
+                next!(prog)
+            end
+
             images_float[:, :, tid] .= max.(zero(FTYPE), images_float[:, :, tid])
             if noise == true
                 add_noise!(images_float[:, :, tid], observations.detector.rn, true, FTYPE=FTYPE)
@@ -164,24 +169,22 @@ end
             images_float[:, :, tid] .= min.(images_float[:, :, tid], observations.detector.saturation)
             images_float[:, :, tid] ./= observations.detector.gain  # Converts e⁻ to counts
             convert_image(observations.images[:, :, n, t], images_float[:, :, tid]) # Converts floating-point counts to integer at bitdepth of detector
-            next!(prog)
         end
     end
     finish!(prog)
 end
 
 @views function create_radiant_energy_pre_detector!(image, image_small_temp, image_big_temp, psf::AbstractMatrix{<:AbstractFloat}, psf_temp, scale_psfs, object, patch_weight, object_patch, aperture_area, exptime, masks, A, P::AbstractMatrix{<:Complex{<:AbstractFloat}}, p::AbstractMatrix{<:Complex{<:AbstractFloat}}, refraction, iffts, convs, background, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smoothing!, nlayers, extractors, sampling_nyquist_mperpix, heights, npatches, nλ, nλint, Δλ)
-    fill!(image, zero(eltype(image)))
+    # fill!(image, zero(eltype(image)))
     for np=1:npatches
         for w₁=1:nλ
             for w₂=1:nλint 
                 w = (w₁-1)*nλint + w₂
                 create_spectral_irradiance_at_aperture!(image_small_temp, image_big_temp, psf, psf_temp, scale_psfs[w], object[:, :, w], patch_weight[:, :, np], object_patch, masks[:, :, w], A, P, p, refraction[w], iffts, convs, background / (Δλ * nλ * nλint * npatches), atmosphere_transmission[w], optics_response[w], ϕ_composite, phase_static[:, :, w], ϕ_slices, ϕ_full[:, :, :, w], smoothing!, nlayers, extractors[np, :, w], sampling_nyquist_mperpix, heights, nλint)
-                image .+= image_small_temp
+                image .+= image_small_temp .* (Δλ * aperture_area * exptime)
             end
         end
     end
-    image .*= Δλ * aperture_area * exptime
 end
 
 @views function create_radiant_energy_pre_detector!(image, image_small_temp, image_big_temp, psfs::AbstractArray{<:AbstractFloat, 4}, psf_temp, scale_psfs, object, patch_weight, object_patch, aperture_area, exptime, masks, A, P::AbstractArray{<:Complex{<:AbstractFloat}, 4}, p::AbstractArray{<:Complex{<:AbstractFloat}, 4}, refraction, iffts, conv!, background, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smoothing!, nlayers, extractors, sampling_nyquist_mperpix, heights, npatches, nλ, nλint, Δλ)
@@ -190,11 +193,10 @@ end
             for w₂=1:nλint 
                 w = (w₁-1)*nλint + w₂
                 create_spectral_irradiance_at_aperture!(image_small_temp, image_big_temp, psfs[:, :, np, w], psf_temp, scale_psfs[w], object[:, :, w], patch_weight[:, :, np], object_patch, masks[:, :, w], A, P[:, :, np, w], p[:, :, np, w], refraction[w], iffts, conv!, background  / (Δλ * nλ * nλint * npatches), atmosphere_transmission[w], optics_response[w], ϕ_composite, phase_static[:, :, w], ϕ_slices, ϕ_full[:, :, :, w], smoothing!, nlayers, extractors[np, :, w], sampling_nyquist_mperpix, heights, nλint)
-                image .+= image_small_temp
+                image .+= image_small_temp .* (Δλ * aperture_area * exptime)
             end
         end
     end
-    image .*= Δλ * aperture_area * exptime
 end
 
 @views function create_spectral_irradiance_at_aperture!(image_small_temp, image_big_temp, psf, psf_temp, scale_psfs, object, patch_weight, object_patch, masks, A, P, p, refraction, iffts, conv!, background, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smoothing!, nlayers, extractors, sampling_nyquist_mperpix, heights, nλint)

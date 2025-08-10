@@ -3,6 +3,7 @@ using Crayons
 
 
 mutable struct Masks{T<:AbstractFloat}
+    label::String
     masks::Array{T, 4}
     dim::Int64
     λ::Vector{T}
@@ -27,6 +28,7 @@ mutable struct Masks{T<:AbstractFloat}
             nsubaps_side=1,
             D_inner_frac=0.0,
             λ_nyquist=minimum(λ),
+            label="",
             verb=true,
             FTYPE=Float64
         )
@@ -35,7 +37,7 @@ mutable struct Masks{T<:AbstractFloat}
         Δλ = (nλ == 1) ? 1.0 : (maximum(λ) - minimum(λ)) / (nλ - 1)
         nsubaps = size(masks_arr, 3)
         scale_psfs = [FTYPE(1 / norm(masks_arr[:, :, 1, w], 2)) for w=1:nλ]
-        masks = new{FTYPE}(masks_arr, dim, λ, λ_nyquist, nλ, Δλ, nsubaps, nsubaps_side, scale_psfs, ix)
+        masks = new{FTYPE}(label, masks_arr, dim, λ, λ_nyquist, nλ, Δλ, nsubaps, nsubaps_side, scale_psfs, ix)
         if verb == true
             display(masks)
         end

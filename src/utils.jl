@@ -296,7 +296,7 @@ function super_gaussian(dim, σ, n; FTYPE=Float64)
 end
 
 function vega_spectrum(; λ=[])
-    file = "data/alpha_lyr_stis_011.fits"
+    file = "$(@__DIR__)/../data/alpha_lyr_stis_011.fits"
     λ₀, spectral_irradiance = readspectrum(file)  # erg/s/cm^2/Å
     λ₀ .*= 1e-10  # convert Å to m
     spectral_irradiance .*= 1e-7  # convert erg/s to W [W/cm^2/Å]
@@ -311,7 +311,7 @@ function vega_spectrum(; λ=[])
 end
 
 function solar_spectrum(; λ=[])
-    file = "data/sun_reference_stis_002.fits"
+    file = "$(@__DIR__)/../data/sun_reference_stis_002.fits"
     λ₀, spectral_irradiance = readspectrum(file)  # Å, mW/m^2/Å
     λ₀ .*= 1e-10  # convert Å to m
     spectral_irradiance .*= 1e-3  # convert mW to W [W/m^2/Å]

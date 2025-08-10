@@ -13,15 +13,18 @@ function Base.display(atmosphere::Atmosphere{<:AbstractFloat})
     println("\tInner scale: $(atmosphere.l0) m")
     println("\tOuter scale: $(atmosphere.L0) m")
     println("\tLayer Heights: $(atmosphere.heights) m")
+    println("\tCn2 Profile: $(atmosphere.Cn2)")
     println("\tFried paremeter: $(atmosphere.r0) m")
+    println("\tCoherence Time: $(atmosphere.τ0) s")
     println("\tReference wavelength: $(atmosphere.λ_ref) nm")
     println("\tWavelength: $(minimum(atmosphere.λ)) — $(maximum(atmosphere.λ)) m")
     println("\tNumber of wavelengths: $(length(atmosphere.λ)) wavelengths")
     println("\tPropagate: $(atmosphere.propagate)")
+    println("\tRandom Seed: $(atmosphere.seeds)")
 end
 
 function Base.display(masks::Masks{<:AbstractFloat})
-    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Masks\n"); print(Crayon(reset=true))
+    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Masks: $(masks.label)\n"); print(Crayon(reset=true))
     println("\tSize: $(masks.dim)×$(masks.dim) pixels")
     println("\tConfiguration: $(masks.nsubaps_side)×$(masks.nsubaps_side) subapertures")
     println("\tWavelength: $(minimum(masks.λ)) — $(maximum(masks.λ)) m")
@@ -41,7 +44,7 @@ end
 
 function Base.display(detector::Detector{<:AbstractFloat})
     DTYPE = gettypes(detector)[end]
-    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Detector\n"); print(Crayon(reset=true))
+    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Detector: $(detector.label)\n"); print(Crayon(reset=true))
     println("\tBit Depth: $(DTYPE)")
     println("\tRN: $(detector.rn) e⁻")
     println("\tGain: $(detector.gain) e⁻/ADU")
@@ -59,7 +62,7 @@ function Base.display(optical_system::OpticalSystem{<:AbstractFloat})
 end
 
 function Base.display(observations::Observations{<:AbstractFloat, <:Real})
-    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Observations\n"); print(Crayon(reset=true))
+    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Observations: $(observations.label)\n"); print(Crayon(reset=true))
     println("\tImage Size: $(observations.dim)×$(observations.dim) pixels")
     println("\tNumber of frames: $(observations.nepochs)")
     println("\tNumber of subapertures: $(observations.nsubaps_side)×$(observations.nsubaps_side) subapertures")

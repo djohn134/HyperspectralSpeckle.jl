@@ -59,30 +59,34 @@ end
 
 @views function create_patch_extractors(patches, atmosphere, observations, object, scaleby_wavelength, scaleby_height; build_dim=observations.dim)
     FTYPE = gettype(atmosphere)
-    extractor = Array{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}, 4}(undef, observations.nepochs, patches.npatches, atmosphere.nlayers, atmosphere.nλ)
+    extractor = Array{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}, 4}(undef, observations.nepochs*observations.nsubexp, patches.npatches, atmosphere.nlayers, atmosphere.nλ)
     Threads.@threads for t=1:observations.nepochs
-        for np=1:patches.npatches
-            for w=1:atmosphere.nλ
-                for l=1:atmosphere.nlayers
-                    center = get_center(patches.positions[:, np], observations.positions[:, t, l, w], object.sampling_arcsecperpix, atmosphere.sampling_nyquist_mperpix[l], atmosphere.heights[l], scaleby_wavelength[w])
-                    extractor[t, np, l, w] = create_extractor_operator(center, atmosphere.dim, build_dim, scaleby_height[l], scaleby_wavelength[w], FTYPE=FTYPE)
+        for tsub=1:observations.nsubexp
+            for np=1:patches.npatches
+                for w=1:atmosphere.nλ
+                    for l=1:atmosphere.nlayers
+                        center = get_center(patches.positions[:, np], observations.positions[:, (t-1)*observations.nsubexp + tsub, l, w], object.sampling_arcsecperpix, atmosphere.sampling_nyquist_mperpix[l], atmosphere.heights[l], scaleby_wavelength[w])
+                        extractor[(t-1)*observations.nsubexp + tsub, np, l, w] = create_extractor_operator(center, atmosphere.dim, build_dim, scaleby_height[l], scaleby_wavelength[w], FTYPE=FTYPE)
+                    end
                 end
             end
         end
     end
-    
+
     return extractor
 end
 
 @views function create_patch_extractors_adjoint(patches, atmosphere, observations, object, scaleby_wavelength, scaleby_height; build_dim=observations.dim)
     FTYPE = gettype(atmosphere)
-    extractor_adj = Array{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}, 4}(undef, observations.nepochs, patches.npatches, atmosphere.nlayers, atmosphere.nλ)
+    extractor_adj = Array{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}, 4}(undef, observations.nepochs*observations.nsubexp, patches.npatches, atmosphere.nlayers, atmosphere.nλ)
     Threads.@threads for t=1:observations.nepochs
-        for np=1:patches.npatches
-            for w=1:atmosphere.nλ
-                for l=1:atmosphere.nlayers
-                    center = get_center(patches.positions[:, np], observations.positions[:, t, l, w], object.sampling_arcsecperpix, atmosphere.sampling_nyquist_mperpix[l], atmosphere.heights[l], scaleby_wavelength[w])
-                    extractor_adj[t, np, l, w] = create_extractor_adjoint(center, atmosphere.dim, build_dim, scaleby_height[l], scaleby_wavelength[w], FTYPE=FTYPE)
+        for tsub=1:observations.nsubexp
+            for np=1:patches.npatches
+                for w=1:atmosphere.nλ
+                    for l=1:atmosphere.nlayers
+                        center = get_center(patches.positions[:, np], observations.positions[:, (t-1)*observations.nsubexp + tsub, l, w], object.sampling_arcsecperpix, atmosphere.sampling_nyquist_mperpix[l], atmosphere.heights[l], scaleby_wavelength[w])
+                        extractor_adj[(t-1)*observations.nsubexp + tsub, np, l, w] = create_extractor_adjoint(center, atmosphere.dim, build_dim, scaleby_height[l], scaleby_wavelength[w], FTYPE=FTYPE)
+                    end
                 end
             end
         end

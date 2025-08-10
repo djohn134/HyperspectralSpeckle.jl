@@ -42,7 +42,7 @@ export mag2flux, template2object, interpolate_object, poly2object, poly2object!,
 include("atmosphere.jl")
 export Atmosphere
 export create_phase_screens!, calculate_atmosphere_parameters!, calculate_layer_masks!
-export get_refraction, refraction_at_layer_pix, refraction_at_detector_pix, layer_scale_factors, layer_nyquist_sampling_mperpix, layer_nyquist_sampling_arcsecperpix, propagate_layers, wind_profile_greenwood, wind_profile_roberts2011, interpolate_phase, calculate_smoothed_opd, composite_r0_to_layers
+export get_refraction, refraction_at_layer_pix, refraction_at_detector_pix, layer_scale_factors, layer_nyquist_sampling_mperpix, layer_nyquist_sampling_arcsecperpix, propagate_layers, wind_profile_greenwood, wind_profile_roberts2011, interpolate_phase, calculate_smoothed_opd, composite_r0_to_layers, calculate_coherence_time
 
 ## criterion
 include("mle.jl")
