@@ -129,6 +129,7 @@ end
 
 mutable struct Observations{T<:AbstractFloat, S<:Real}
     label::String
+    masks::Masks{T}
     optics::OpticalSystem{T}
     phase_static::Array{T, 3}
     detector::Detector{T, S}
@@ -151,22 +152,34 @@ mutable struct Observations{T<:AbstractFloat, S<:Real}
             detector;
             ζ=Inf,
             D=Inf,
-            area=pi*(D/2)^2,
+            D_inner_frac=0,
+            area=pi*(D/2)^2*(1-D_inner_frac^2),
             times=[],
             nsubexp=1,
             nepochs=0,
-            nsubaps=0,
             nsubaps_side=1,
             dim=0,
             ϕ_static=[;;;],
+            build_dim=dim,
             label="",
             verb=true,
             FTYPE=Float64
         )
+        masks = Masks(
+            build_dim,
+            detector.λ,
+            nsubaps_side=nsubaps_side, 
+            D_inner_frac=D_inner_frac,  
+            λ_nyquist=detector.λ_nyquist, 
+            verb=verb,
+            label=label,
+            FTYPE=FTYPE
+        )
+        nsubaps = masks.nsubaps
         nepochs = (nepochs==0) ? length(times) : nepochs
         DTYPE = gettypes(detector)[2]
         optics.response .*= detector.qe
-        observations = new{FTYPE, DTYPE}(label, optics, ϕ_static, detector, ζ, D, area, times, nsubexp, nepochs, nsubaps, nsubaps_side, dim)
+        observations = new{FTYPE, DTYPE}(label, masks, optics, ϕ_static, detector, ζ, D, area, times, nsubexp, nepochs, nsubaps, nsubaps_side, dim)
         if verb == true
             display(observations)
         end
@@ -179,19 +192,31 @@ mutable struct Observations{T<:AbstractFloat, S<:Real}
             detector;
             ζ=Inf,
             D=Inf,
-            area=pi*(D/2)^2,
+            D_inner_frac=0,
+            area=pi*(D/2)^2*(1-D_inner_frac^2),
             nsubaps_side=1,
             nsubexp=1,
             ϕ_static=[;;;],
+            build_dim=size(images, 1),
             label="",
             verb=true,
             FTYPE=Float64
         )
         dim, ~, nsubaps, nepochs = size(images)
+        masks = Masks(
+            build_dim,
+            detector.λ,
+            nsubaps_side=nsubaps_side, 
+            D_inner_frac=D_inner_frac,  
+            λ_nyquist=detector.λ_nyquist, 
+            verb=verb,
+            label=label,
+            FTYPE=FTYPE
+        )
         entropy = [calculate_entropy(images[:, :, n, t]) for n=1:nsubaps, t=1:nepochs]
         DTYPE = gettypes(detector)[2]
         optics.response .*= detector.qe
-        observations = new{FTYPE, DTYPE}(label, optics, ϕ_static, detector, ζ, D, area, times, nsubexp, nepochs, nsubaps, nsubaps_side, dim, images, entropy)
+        observations = new{FTYPE, DTYPE}(label, masks, optics, ϕ_static, detector, ζ, D, area, times, nsubexp, nepochs, nsubaps, nsubaps_side, dim, images, entropy)
         if verb == true
             display(observations)
         end

@@ -39,7 +39,7 @@ mutable struct Atmosphere{T<:AbstractFloat}
         L0=100.0,
         Dr0=NaN,
         r0=[NaN],
-        wind=[NaN], 
+        wind=[NaN NaN;], 
         heights=[NaN],
         transmission=[1.0],
         sampling_nyquist_mperpix=[NaN],
@@ -168,18 +168,23 @@ function layer_scale_factors(layer_heights, object_height)
 end
 
 function calculate_screen_size!(atmosphere, observations, object, patches; verb=true)
-    ndatasets = length(observations)
-    mint = minimum([minimum(observation.times) for observation in observations])
-    maxt = maximum([maximum(observation.times) for observation in observations])
-    maxexp = maximum([observation.detector.exptime for observation in observations])
-    maxt += maxexp
-    Δt = maxt - mint
-    Δpos_meters_total = Δt .* [atmosphere.wind[:, 1].*sind.(atmosphere.wind[:, 2]) atmosphere.wind[:, 1].*cosd.(atmosphere.wind[:, 2])]'
-    Δpos_pix_total = Δpos_meters_total ./ minimum(atmosphere.sampling_nyquist_mperpix)
-    Δpix_refraction = maximum([maximum(abs.(refraction_at_layer_pix(atmosphere, observations[dd]))) for dd=1:ndatasets])
-    Δpix_aniso = 2*maximum(abs.(patches.positions)) * (object.sampling_arcsecperpix / 206265) * maximum(atmosphere.heights) / minimum(atmosphere.sampling_nyquist_mperpix)
-    max_image_size = maximum([observations[dd].dim for dd=1:ndatasets])
-    atmosphere.dim = nextprod((2, 3, 5, 7), maximum(ceil.(abs.(Δpos_pix_total))) + max_image_size + Δpix_refraction + Δpix_aniso)
+    if all(isnan.(atmosphere.wind)) == false
+        ndatasets = length(observations)
+        mint = minimum([minimum(observations[dd].times) for dd=1:length(observations)])
+        maxt = maximum([maximum(observations[dd].times) for dd=1:length(observations)])
+        maxexp = maximum([observations[dd].detector.exptime for dd=1:length(observations)])
+        maxt += maxexp
+        Δt = maxt - mint
+        Δpos_meters_total = Δt .* [atmosphere.wind[:, 1].*sind.(atmosphere.wind[:, 2]) atmosphere.wind[:, 1].*cosd.(atmosphere.wind[:, 2])]'
+        Δpos_pix_total = Δpos_meters_total ./ minimum(atmosphere.sampling_nyquist_mperpix)
+        Δpix_refraction = maximum([maximum(abs.(refraction_at_layer_pix(atmosphere, observations[dd]))) for dd=1:ndatasets])
+        Δpix_aniso = 2*maximum(abs.(patches.positions)) * (object.sampling_arcsecperpix / 206265) * maximum(atmosphere.heights) / minimum(atmosphere.sampling_nyquist_mperpix)
+        max_image_size = maximum([observations[dd].dim for dd=1:ndatasets])
+        atmosphere.dim = nextprod((2, 3, 5, 7), maximum(ceil.(abs.(Δpos_pix_total))) + max_image_size + Δpix_refraction + Δpix_aniso)
+    else
+        max_image_size = maximum([observations[dd].dim for dd=1:length(observations)])
+        atmosphere.dim = max_image_size
+    end
     if verb == true
         println("\tSize: $(atmosphere.dim)×$(atmosphere.dim) pixels")
     end
@@ -248,34 +253,35 @@ end
 end
 
 @views function calculate_layer_masks!(patches, atmosphere, observations, object; build_dim=object.dim, verb=true)
-    if verb == true
-        println("Creating sausage masks for $(atmosphere.nlayers) layers at $(atmosphere.nλ) wavelengths")
-    end
-    FTYPE = gettype(atmosphere)
-    ndatasets = length(observations)
-    scaleby_wavelength = atmosphere.λ_nyquist ./ atmosphere.λ
-    scaleby_height = layer_scale_factors(atmosphere.heights, object.range)
-    buffer = zeros(FTYPE, atmosphere.dim, atmosphere.dim, Threads.nthreads())
-    layer_mask = zeros(Bool, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ, Threads.nthreads())
-    nyquist_mask, ~ = make_ish_masks(build_dim, 1, atmosphere.λ, λ_nyquist=atmosphere.λ_nyquist, verb=false, FTYPE=FTYPE)
-    for dd=1:ndatasets
-        deextractors = create_patch_extractors_adjoint(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
-        Threads.@threads :static for t=1:observations[dd].nepochs
-            tid = Threads.threadid()
-            for tsub=1:observations[dd].nsubexp
-                for np=1:patches.npatches
-                    for w=1:atmosphere.nλ
-                        for l=1:atmosphere.nlayers
-                            position2phase!(buffer[:, :, tid], nyquist_mask[:, :, 1, w], deextractors[(t-1)*observations[dd].nsubexp + tsub, np, l, w])
-                            layer_mask[:, :, l, w, tid] .= layer_mask[:, :, l, w, tid] .|| round.(Bool, buffer[:, :, tid])
+    if all(isnan.(atmosphere.wind)) == false
+        if verb == true
+            println("Creating sausage masks for $(atmosphere.nlayers) layers at $(atmosphere.nλ) wavelengths")
+        end
+        FTYPE = gettype(atmosphere)
+        ndatasets = length(observations)
+        scaleby_wavelength = atmosphere.λ_nyquist ./ atmosphere.λ
+        scaleby_height = layer_scale_factors(atmosphere.heights, object.range)
+        buffer = zeros(FTYPE, atmosphere.dim, atmosphere.dim, Threads.nthreads())
+        layer_mask = zeros(Bool, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ, Threads.nthreads())
+        nyquist_mask, ~ = make_ish_masks(build_dim, 1, atmosphere.λ, λ_nyquist=atmosphere.λ_nyquist, verb=false, FTYPE=FTYPE)
+        for dd=1:ndatasets
+            deextractors = create_patch_extractors_adjoint(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
+            Threads.@threads :static for t=1:observations[dd].nepochs
+                tid = Threads.threadid()
+                for tsub=1:observations[dd].nsubexp
+                    for np=1:patches.npatches
+                        for w=1:atmosphere.nλ
+                            for l=1:atmosphere.nlayers
+                                position2phase!(buffer[:, :, tid], nyquist_mask[:, :, 1, w], deextractors[(t-1)*observations[dd].nsubexp + tsub, np, l, w])
+                                layer_mask[:, :, l, w, tid] .= layer_mask[:, :, l, w, tid] .|| round.(Bool, buffer[:, :, tid])
+                            end
                         end
                     end
                 end
             end
         end
+        atmosphere.masks = min.(1.0, dropdims(sum(layer_mask, dims=5), dims=5))
     end
-
-    atmosphere.masks = min.(1.0, dropdims(sum(layer_mask, dims=5), dims=5))
 end
 
 function air_refractive_index_minus_one(λ; pressure=69.328, temperature=293.15, H2O_pressure=1.067)

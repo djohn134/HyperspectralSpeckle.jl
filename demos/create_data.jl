@@ -6,8 +6,8 @@ using Statistics
 ############# Data Parameters #############
 FTYPE = Float32;
 # folder = "/home/dan/Desktop/JASS_2024/tests";
-folder = "data"
-id = "_test"
+folder = "test"
+id = ""
 verb = true
 ###########################################
 
@@ -21,7 +21,7 @@ nλ = 1
 λmin = 500.0e-9  # m
 λmax = 500.0e-9  # m
 λ = collect(range(λmin, stop=λmax, length=nλ))  # m
-λ_nyquist = mean(λ)  # m
+λ_nyquist = minimum(λ)  # m
 Δλ = (nλ == 1) ? 1.0 : (λmax - λmin) / (nλ - 1)  # m
 resolution = mean(λ) / Δλ
 ###########################################
@@ -34,7 +34,7 @@ fov = 10.0  # arcsec
 pixscale_full = fov / image_dim  # arcsec/pix
 pixscale_wfs = pixscale_full .* nsubaps_side  # arcsec/pix
 DTYPE = UInt16
-qefile = "data/qe/prime-95b_qe.dat"
+qefile = "../data/qe/prime-95b_qe.dat"
 ~, qe = readqe(qefile, λ=λ)  # e⁻ / ph
 rn = 2.0  # e⁻
 saturation = 30000.0  # e⁻
@@ -51,15 +51,6 @@ filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
 beamsplitter = OpticalElement(λ=[400.0e-9, 1000.0e-9], response=[0.5, 0.5], FTYPE=FTYPE)
 optics_full = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 ######### Create Full-Ap Detector #########
-masks_full = Masks(
-    image_dim,
-    λ,
-    nsubaps_side=1,
-    D_inner_frac=D_inner_frac, 
-    λ_nyquist=λ_nyquist, 
-    verb=verb,
-    FTYPE=FTYPE
-)
 detector_full = Detector(
     qe=qe,
     rn=rn,
@@ -71,7 +62,8 @@ detector_full = Detector(
     exptime=exptime,
     verb=verb,
     FTYPE=FTYPE,
-    DTYPE=DTYPE
+    DTYPE=DTYPE,
+    label="Full Aperture"
 )
 ### Create Full-Ap Observations object ####
 ϕ_static_full = zeros(FTYPE, image_dim, image_dim, nλ)
@@ -82,26 +74,16 @@ observations_full = Observations(
     detector_full,
     ζ=ζ,
     D=D,
-    area=aperture_area,
+    D_inner_frac=D_inner_frac,
     times=times,
-    nsubaps=1,
+    nsubaps_side=1,
     dim=image_dim,
     ϕ_static=ϕ_static_full,
     verb=verb,
-    FTYPE=FTYPE
+    FTYPE=FTYPE,
+    label="Full Aperture"
 )
-# masks = [masks_full]
 # observations = [observations_full]
-masks_wfs = Masks(
-    image_dim,
-    λ,
-    nsubaps_side=nsubaps_side,
-    D_inner_frac=D_inner_frac,
-    λ_nyquist=λ_nyquist, 
-    FTYPE=FTYPE
-)
-nsubaps = masks_wfs.nsubaps
-masks_wfs.scale_psfs = masks_full.scale_psfs
 optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 detector_wfs = Detector(
     qe=qe,
@@ -114,7 +96,8 @@ detector_wfs = Detector(
     exptime=exptime,
     verb=verb,
     FTYPE=FTYPE,
-    DTYPE=DTYPE
+    DTYPE=DTYPE,
+    label="Wavefront Sensor"
 )
 ### Create Full-Ap Observations object ####
 ϕ_static_wfs = zeros(FTYPE, image_dim, image_dim, nλ)
@@ -125,21 +108,23 @@ observations_wfs = Observations(
     D=D,
     area=aperture_area,
     times=times,
-    nsubaps=masks_wfs.nsubaps,
     nsubaps_side=nsubaps_side,
     dim=wfs_dim,
     ϕ_static=ϕ_static_wfs,
+    build_dim=observations_full.dim,
     verb=verb,
-    FTYPE=FTYPE
+    FTYPE=FTYPE,
+    label="Wavefront Sensor"
 )
+nsubaps = observations_wfs.masks.nsubaps
+observations_wfs.masks.scale_psfs = observations_full.masks.scale_psfs
 observations = [observations_full, observations_wfs]
-masks = [masks_full, masks_wfs]
 header = create_header(λ, units="unitless")
-[writefits(masks[dd].masks, "$(folder)/masks_ISH$(masks[dd].nsubaps_side)x$(masks[dd].nsubaps_side)$(id).fits", header=header) for dd=1:length(masks)]
+[writefits(observations[dd].masks.masks, "$(folder)/masks_ISH$(observations[dd].masks.nsubaps_side)x$(observations[dd].masks.nsubaps_side)$(id).fits", header=header) for dd=1:length(observations)]
 ###########################################
 
 ############ Object Parameters ############
-objectfile = "data/OCNR2.fits"
+objectfile = "../data/hubble_truth2.fits"
 # object_arr, ~ = template2object(objectfile, image_dim, λ, FTYPE=FTYPE)
 object_arr = repeat(block_reduce(readfits(objectfile, FTYPE=FTYPE), image_dim), 1, 1, nλ)
 ~, spectrum = solar_spectrum(λ=λ)
@@ -176,33 +161,25 @@ patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FT
 ###########################################
 
 ########## Atmosphere Parameters ##########
-l0 = 0.01  # m
-L0 = 100.0  # m
 Dr0_ref_vertical = 20.0
-Dr0_ref_composite = Dr0_ref_vertical * secd(ζ)
-r0_ref_composite = D / Dr0_ref_composite
 heights = [0.0, 7000.0, 12500.0]  # m
 wind_speed = wind_profile_roberts2011(heights, ζ)
 wind_direction = [45.0, 125.0, 135.0]  # deg
 wind = [wind_speed wind_direction]
 nlayers = length(heights)
 propagate = false
-r0_ref = composite_r0_to_layers(r0_ref_composite, heights, λ_ref, ζ)
-seeds = [713, 1212, 525118]
+# seeds = [713, 1212, 525118]
 Dmeta = D .+ (fov/206265) .* heights
 sampling_nyquist_mperpix = layer_nyquist_sampling_mperpix(D, image_dim, nlayers)
 sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heights, image_dim)
-~, transmission = readtransmission("data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
+~, transmission = readtransmission("../data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
 ############ Create Atmosphere ############
 atmosphere = Atmosphere(
     λ,
     observations, 
-    masks,
     object, 
     patches,
-    l0=l0,
-    L0=L0,
-    r0=r0_ref, 
+    Dr0=Dr0_ref_vertical,
     wind=wind, 
     heights=heights, 
     transmission=transmission,
@@ -211,17 +188,17 @@ atmosphere = Atmosphere(
     λ_nyquist=λ_nyquist,
     λ_ref=λ_ref,
     propagate=propagate,
-    seeds=seeds, 
+    # seeds=seeds, 
     FTYPE=FTYPE
 )
 ########## Create phase screens ###########
 # opd_smooth = calculate_smoothed_opd(atmosphere, observations_full)
 header = create_header(λ, units="rad")
-writefits(atmosphere.phase, "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_phase_full$(id).fits", header=header)
+writefits(atmosphere.phase, "$(folder)/Dr0_$(round(Int64, Dr0_ref_vertical))_phase_full$(id).fits", header=header)
 # writefits(opd_smooth, "$(folder)/Dr0_$(round(Int64, Dr0_composite))_opd_full_smooth$(id).fits")
 ###########################################
 
 ########## Create Full-Ap images ##########
-[create_detector_images(patches, observations[dd], atmosphere, masks[dd], object, build_dim=image_dim, noise=noise) for dd=1:length(observations)]
-[writefits(observations[dd].images, "$(folder)/Dr0_$(round(Int64, Dr0_ref_composite))_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_images$(id).fits", header=create_header(observations[dd])) for dd=1:length(observations)]
+[create_detector_images(patches, observations[dd], atmosphere, object, build_dim=image_dim, noise=noise) for dd=1:length(observations)]
+[writefits(observations[dd].images, "$(folder)/Dr0_$(round(Int64, Dr0_ref_vertical))_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_images$(id).fits", header=create_header(observations[dd])) for dd=1:length(observations)]
 ###########################################
