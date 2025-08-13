@@ -174,16 +174,6 @@ end
     finish!(prog)
 end
 
-# @views function create_radiant_energy_pre_detector!(image, image_small_temp, image_big_temp, psf, psf_temp, scale_psfs, object, aperture_area, exptime, masks, A, P, p, refraction, iffts, convs, background, atmosphere_transmission, optics_response, ϕ_composite, phase_static, smoothing!, nλ, nλint, Δλ)
-#     for w₁=1:nλ
-#         for w₂=1:nλint 
-#             w = (w₁-1)*nλint + w₂
-#             create_spectral_irradiance_at_aperture!(image_small_temp, image_big_temp, psf[:, :, w], psf_temp, scale_psfs[w], object[:, :, w], masks[:, :, w], A[:, :, w], P[:, :, w], p[:, :, w], refraction[w], iffts, convs, background / (Δλ * nλ * nλint), atmosphere_transmission[w], optics_response[w], ϕ_composite[:, :, w], phase_static[:, :, w], smoothing!, nλint)
-#             image .+= image_small_temp .* (Δλ * aperture_area * exptime)
-#         end
-#     end
-# end
-
 @views function create_radiant_energy_pre_detector!(image, image_small_temp, image_big_temp, psf::AbstractMatrix{<:AbstractFloat}, psf_temp, scale_psfs, object, patch_weight, object_patch, aperture_area, exptime, masks, A, P::AbstractMatrix{<:Complex{<:AbstractFloat}}, p::AbstractMatrix{<:Complex{<:AbstractFloat}}, refraction, iffts, convs, background, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smoothing!, nlayers, extractors, sampling_nyquist_mperpix, heights, npatches, nλ, nλint, Δλ)
     # fill!(image, zero(eltype(image)))
     for np=1:npatches
@@ -208,20 +198,6 @@ end
         end
     end
 end
-
-# @views function create_spectral_irradiance_at_aperture!(image_small_temp, image_big_temp, psf, psf_temp, scale_psfs, object, masks, A, P, p, refraction, iffts, conv!, background, atmosphere_transmission, optics_response, ϕ, phase_static, smoothing!, nλint)
-#     smoothing!(ϕ, ϕ)
-#     ϕ .+= phase_static
-
-#     pupil2psf!(psf, psf_temp, masks, P, p, A, ϕ, scale_psfs, iffts, refraction)
-#     psf ./= nλint
-
-#     conv!(image_big_temp, object, psf)
-#     block_reduce!(image_small_temp, image_big_temp)
-    
-#     image_small_temp .+= background
-#     image_small_temp .*= optics_response * atmosphere_transmission
-# end
 
 @views function create_spectral_irradiance_at_aperture!(image_small_temp, image_big_temp, psf, psf_temp, scale_psfs, object, patch_weight, object_patch, masks, A, P, p, refraction, iffts, conv!, background, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smoothing!, nlayers, extractors, sampling_nyquist_mperpix, heights, nλint)
     calculate_composite_pupil!(A, ϕ_composite, ϕ_slices, ϕ_full, nlayers, extractors, masks, sampling_nyquist_mperpix, heights)

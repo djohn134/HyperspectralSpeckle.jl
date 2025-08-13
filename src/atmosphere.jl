@@ -27,7 +27,6 @@ mutable struct Atmosphere{T<:AbstractFloat}
     seeds::Vector{Int64}
     masks::Array{T, 4}
     dim::Int64
-    positions::Vector{Array{T, 4}}
     A::Array{T, 4}
     phase::Array{T, 4}
     function Atmosphere(
