@@ -13,8 +13,10 @@ plot = true
 ###########################################
 
 ##### Size, Timestep, and Wavelengths #####
-image_dim = 256
-wfs_dim = 64
+datafile_wfs = "$(folder)/Dr0_20_ISH$(nsubaps_side)x$(nsubaps_side)_images.fits"
+images_wfs, nsubaps, ~, wfs_dim, exptime_wfs, times_wfs = readimages(datafile_wfs, FTYPE=FTYPE)
+datafile_full = "$(folder)/Dr0_20_ISH1x1_images.fits"
+images_full, ~, ~, image_dim, exptime_full, times_full = readimages(datafile_full, FTYPE=FTYPE)
 nsubaps_side = 6
 nλ = 1
 nλint = 1
@@ -36,7 +38,6 @@ patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FT
 ### Detector & Observations Parameters ####
 D = 3.6  # m
 D_inner_frac = 0.0
-aperture_area = pi * (D / 2)^2 * (1 - D_inner_frac^2)
 fov = 10.0
 pixscale_full = fov / image_dim
 pixscale_wfs = pixscale_full .* nsubaps_side
@@ -53,8 +54,6 @@ filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
 beamsplitter = OpticalElement(λ=[400.0e-9, 1000.0e-9], response=[0.5, 0.5], FTYPE=FTYPE)
 optics_full = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 ######### Create Full-Ap Detector #########
-datafile = "$(folder)/Dr0_20_ISH1x1_images.fits"
-images_full, ~, nepochs, image_dim, exptime_full, times_full = readimages(datafile, FTYPE=FTYPE)
 detector_full = Detector(
     qe=qe,
     rn=rn,
@@ -83,8 +82,6 @@ observations_full = Observations(
     FTYPE=FTYPE
 )
 # observations = [observations_full]
-datafile = "$(folder)/Dr0_20_ISH$(nsubaps_side)x$(nsubaps_side)_images.fits"
-images_wfs, nsubaps, ~, wfs_dim, exptime_wfs, times_wfs = readimages(datafile, FTYPE=FTYPE)
 optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 detector_wfs = Detector(
     qe=qe,
@@ -152,7 +149,6 @@ heights .*= 0.0
 wind_direction = [45.0, 125.0, 135.0]
 wind = [wind_speed wind_direction]
 nlayers = length(heights)
-scaleby_wavelength = λ_nyquist ./ λ
 sampling_nyquist_mperpix = layer_nyquist_sampling_mperpix(D, image_dim, nlayers)
 sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heights, image_dim)
 ~, transmission = readtransmission("/home/dan/Desktop/HyperspectralSpeckle.jl/data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
