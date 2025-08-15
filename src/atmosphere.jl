@@ -69,7 +69,7 @@ mutable struct Atmosphere{T<:AbstractFloat}
         calculate_atmosphere_parameters!(atmosphere, observations, object, patches, verb=verb)
 
         if create_screens == true
-            create_phase_screens!(atmosphere)
+            create_phase_screens!(atmosphere, verb=verb)
             atmosphere.phase .*= atmosphere.masks
         end
         return atmosphere

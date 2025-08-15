@@ -8,7 +8,7 @@ FTYPE = Float32;
 # folder = "/home/dan/Desktop/JASS_2024/tests";
 folder = "test"
 id = ""
-verb = true
+verb = false
 ###########################################
 
 ##### Size, Timestep, and Wavelengths #####
@@ -41,7 +41,7 @@ saturation = 30000.0  # e⁻
 gain = saturation / (typemax(DTYPE))  # e⁻ / ADU
 DTYPE = UInt16
 exptime = 5e-3  # sec
-nepochs = 10
+nepochs = 30
 times = collect(0:nepochs-1) .* exptime
 # times = [0.0]
 noise = true
@@ -120,7 +120,7 @@ nsubaps = observations_wfs.masks.nsubaps
 observations_wfs.masks.scale_psfs = observations_full.masks.scale_psfs
 observations = [observations_full, observations_wfs]
 header = create_header(λ, units="unitless")
-[writefits(observations[dd].masks.masks, "$(folder)/masks_ISH$(observations[dd].masks.nsubaps_side)x$(observations[dd].masks.nsubaps_side)$(id).fits", header=header) for dd=1:length(observations)]
+# [writefits(observations[dd].masks.masks, "$(folder)/masks_ISH$(observations[dd].masks.nsubaps_side)x$(observations[dd].masks.nsubaps_side)$(id).fits", header=header) for dd=1:length(observations)]
 ###########################################
 
 ############ Object Parameters ############
@@ -148,16 +148,16 @@ object = Object(
     FTYPE=FTYPE
 )
 header = create_header(λ, units="ph/s/m^2/m")
-writefits(object.object, "$(folder)/object_truth_spectral$(id).fits", header=header)
+# writefits(object.object, "$(folder)/object_truth_spectral$(id).fits", header=header)
 header = create_header(λ, units="ph/s/m^2")
-writefits(dropdims(sum(object.object, dims=3), dims=3)*Δλ, "$(folder)/object_truth$(id).fits", header=header)
+# writefits(dropdims(sum(object.object, dims=3), dims=3)*Δλ, "$(folder)/object_truth$(id).fits", header=header)
 ###########################################
 
 ########## Anisopatch Parameters ##########
 isoplanatic = false
 patch_dim = 64
 ###### Create Anisoplanatic Patches #######
-patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FTYPE=FTYPE)
+patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FTYPE=FTYPE, verb=verb)
 ###########################################
 
 ########## Atmosphere Parameters ##########
@@ -189,16 +189,28 @@ atmosphere = Atmosphere(
     λ_ref=λ_ref,
     propagate=propagate,
     # seeds=seeds, 
-    FTYPE=FTYPE
+    FTYPE=FTYPE,
+    verb=verb
 )
 ########## Create phase screens ###########
 # opd_smooth = calculate_smoothed_opd(atmosphere, observations_full)
 header = create_header(λ, units="rad")
-writefits(atmosphere.phase, "$(folder)/Dr0_$(round(Int64, Dr0_ref_vertical))_phase_full$(id).fits", header=header)
+# writefits(atmosphere.phase, "$(folder)/Dr0_$(round(Int64, Dr0_ref_vertical))_phase_full$(id).fits", header=header)
 # writefits(opd_smooth, "$(folder)/Dr0_$(round(Int64, Dr0_composite))_opd_full_smooth$(id).fits")
 ###########################################
 
 ########## Create Full-Ap images ##########
-[create_detector_images(patches, observations[dd], atmosphere, object, build_dim=image_dim, noise=noise) for dd=1:length(observations)]
+# using BenchmarkTools
+# @btime [create_detector_images($patches, $observations[dd], $atmosphere, $object, build_dim=$image_dim, noise=$noise, verb=$verb) for dd=1:length(observations)]
+[create_detector_images(patches, observations[dd], atmosphere, object, build_dim=image_dim, noise=noise, verb=verb) for dd=1:length(observations)]
 [writefits(observations[dd].images, "$(folder)/Dr0_$(round(Int64, Dr0_ref_vertical))_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_images$(id).fits", header=create_header(observations[dd])) for dd=1:length(observations)]
 ###########################################
+
+## Isoplanatic
+# Naive threadix: 1.278 s (546486 allocations: 137.16 MiB)
+# OhMyThreads.Channel: 1.264 s (533701 allocations: 144.43 MiB)
+#                      1.240 s (536749 allocations: 144.49 MiB)
+## Anisoplanatic
+# Naive threadix: 197.684 s (751385 allocations: 144.23 MiB)
+# OhMyThreads.Channel: 205.700 s (748062 allocations: 151.27 MiB)
+#                      102.606 s (743478 allocations: 151.16 MiB)      

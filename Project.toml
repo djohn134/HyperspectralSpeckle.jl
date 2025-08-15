@@ -1,4 +1,5 @@
 [deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 Conda = "8f4d0f93-b110-5947-807f-2305c1781a2d"
 Crayons = "a8cc5b0e-0ffa-5ad4-8c14-923d3ee1735f"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
@@ -11,6 +12,7 @@ JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
 LazyAlgebra = "aeaa251e-9d76-11e9-311b-83636bf44738"
 LinearInterpolators = "2fc109c4-9d77-11e9-32ff-e5c650334c16"
 NumericalIntegration = "e7bfaba1-d571-5449-8927-abc22e82249b"
+OhMyThreads = "67456a42-1dca-4109-a031-0a68de7e3ad5"
 OptimPackNextGen = "080ffe24-4a27-4ab0-ad71-7b624e73ef8d"
 PerceptualColourMaps = "54e51dfa-9dd7-5231-aa84-a4037b83483a"
 ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
