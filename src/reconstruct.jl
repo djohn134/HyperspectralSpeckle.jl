@@ -5,10 +5,13 @@ using OptimPackNextGen
 
 
 const VERB_LEVELS = Dict(
-    "full"=>Dict("vm"=>true, "vo"=>true),  # Print output from the MFBD iteration, and the output from OptimPackNextGen
-    "mfbd_only"=>Dict("vm"=>true, "vo"=>false),  # Print only the output from the MFBD itration
-    "silent"=>Dict("vm"=>false, "vo"=>false)  # Print nothing
+    :full=>Dict("vm"=>true, "vo"=>true),  # Print output from the MFBD iteration, and the output from OptimPackNextGen
+    :reduced=>Dict("vm"=>true, "vo"=>false),  # Print only the output from the MFBD itration
+    :silent=>Dict("vm"=>false, "vo"=>false)  # Print nothing
 )
+const VALID_WAVEFRONT_PARAMETERS = [:psf, :phase, :static_phase, :opd]
+const VALID_MINIMIZATION_SCHEMES = [:mle, :mrl]
+const VALID_NOISEMODELS = [:gaussian, :mixed]
 
 function ConstantSchedule(fwhm)
     function constant(x)
@@ -50,122 +53,138 @@ mutable struct Helpers{T<:AbstractFloat}
     extractor_adj::Vector{Array{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}, 4}}
     refraction::Matrix{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}}
     refraction_adj::Matrix{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}}
-    ft::Vector{Function}
-    ift::Vector{Function}
-    convolve::Vector{Function}
-    correlate::Vector{Function}
-    autocorr::Vector{Function}
-    A::Array{T, 3}
-    ϕ_full::Array{T, 3}
-    ϕ_slices::Array{T, 3}
-    ϕ_composite::Array{T, 3}
-    o_conv::Array{Function, 3}
-    o_corr::Array{Function, 3}
-    smoothing_kernel::Matrix{T}
-    smooth::Vector{Function}
-    unsmooth::Vector{Function}
-    P::Array{Complex{T}, 5}
-    p::Array{Complex{T}, 5}
-    c::Array{T, 3}
-    d::Array{Complex{T}, 3}
-    d2::Array{T, 3}
-    psf::Array{T, 5}
-    psf_temp::Array{T, 3}
-    object_patch::Array{T, 3}
-    image_temp_big::Array{T, 3}
-    image_temp_small::Vector{Array{T, 3}}
-    r::Vector{Array{T, 3}}
-    ω::Vector{Array{T, 3}}
     mask_acf::Vector{Matrix{T}}
-    ϵ_threads::Vector{T}
-    g_threads_obj::Array{T, 4}
-    g_threads_wf::Union{Array{T, 4}, Array{T, 5}}
-    containers_builddim_real::Array{T, 3}
-    containers_builddim_cplx::Array{Complex{T}, 3}
-    containers_sdim_real::Array{T, 3}
-    containers_sdim_cplx::Array{T, 3}
-    containers_pdim_real::Vector{Array{T, 3}}
-    containers_pdim_cplx::Vector{Array{Complex{T}, 3}}
-    function Helpers(atmosphere,
-                     observations,
-                     object,
-                     patches,
-                     wavefront_parameter,
-                     frozen_flow;
-                     λtotal=atmosphere.λ,
-                     build_dim=size(object.object, 1),
-                     ndatasets=length(observations),
-                     FTYPE=gettype(atmosphere))
+    smoothing_kernel::Matrix{T}
+    channel_object_gradient_buffer::Channel{Array{T, 3}}
+    channel_object_gradient_accumulator::Channel{Array{T, 3}}
+    channel_wavefront_gradient_buffer::Union{Channel{Array{T, 3}}, Channel{Array{T, 4}}}
+    channel_wavefront_gradient_accumulator::Union{Channel{Array{T, 3}}, Channel{Array{T, 4}}}
+    channel_smooth::Channel{Function}
+    channel_unsmooth::Channel{Function}
+    channel_object_preconv::Matrix{Channel{Function}}
+    channel_object_precorr::Matrix{Channel{Function}}
+    channel_imagedim::Vector{Channel{Matrix{T}}}
+    channel_builddim_real::Channel{Matrix{T}}
+    channel_builddim_real_4d::Channel{Array{T, 4}}
+    channel_builddim_cplx::Channel{Matrix{Complex{T}}}
+    channel_builddim_cplx_4d::Channel{Array{Complex{T}, 4}}
+    channel_layerdim_real::Channel{Matrix{T}}
+    channel_layerdim_cplx::Channel{Matrix{Complex{T}}}
+    channel_ft::Channel{Function}
+    channel_ift::Channel{Function}
+    channel_convolve::Channel{Function}
+    channel_correlate::Channel{Function}
+    channel_autocorr::Channel{Function}
+    function Helpers(
+            atmosphere,
+            observations,
+            object,
+            patches,
+            wavefront_parameter,
+            frozen_flow;
+            λtotal=atmosphere.λ,
+            build_dim=size(object.object, 1),
+            ndatasets=length(observations),
+            FTYPE=gettype(atmosphere)
+        )
+
         nλtotal = length(λtotal)
-        fft_threads = [setup_fft(FTYPE, build_dim)[1] for ~=1:Threads.nthreads()]
-        ifft_threads = [setup_ifft(Complex{FTYPE}, build_dim)[1] for ~=1:Threads.nthreads()]
-        conv_threads = [setup_conv(FTYPE, build_dim) for ~=1:Threads.nthreads()]
-        corr_threads = [setup_corr(FTYPE, build_dim) for ~=1:Threads.nthreads()]
-        autocorr_threads = [setup_autocorr(FTYPE, build_dim) for ~=1:Threads.nthreads()]
-
         nthreads = Threads.nthreads()
-        ϵ_threads = zeros(FTYPE, nthreads)
 
-        if (wavefront_parameter == :phase) && (frozen_flow==true)
-            g_threads_wf = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ, nthreads)
-        elseif (wavefront_parameter == :opd) && (frozen_flow==true)
-            g_threads_wf = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, nthreads)
-        elseif (wavefront_parameter == :phase) && (frozen_flow==false)
-            g_threads_wf = zeros(FTYPE, build_dim, build_dim, sum([observations[dd].nepochs for dd=1:ndatasets]), atmosphere.nλ, nthreads)
+        channel_object_preconv = Matrix{Channel{Function}}(undef, object.nλ, patches.npatches)
+        channel_object_precorr = Matrix{Channel{Function}}(undef, object.nλ, patches.npatches)
+        for w=1:object.nλ
+            for np=1:patches.npatches
+                channel_object_preconv[w, np] = Channel{Function}(nthreads)
+                channel_object_precorr[w, np] = Channel{Function}(nthreads)
+                foreach(1:nthreads) do ~
+                    put!(channel_object_preconv[w, np], () -> nothing)
+                    put!(channel_object_precorr[w, np], () -> nothing)
+                end
+            end
         end
 
-        g_threads_obj = zeros(FTYPE, build_dim, build_dim, object.nλ, nthreads)
-        A = ones(FTYPE, build_dim, build_dim, nthreads)
-        ϕ_full = zeros(FTYPE, atmosphere.dim, atmosphere.dim, nthreads)
-        ϕ_slices = Array{FTYPE, 3}(undef, build_dim, build_dim, nthreads)
-        ϕ_composite = zeros(FTYPE, build_dim, build_dim, nthreads)
-        o_conv = Array{Function, 3}(undef, object.nλ, patches.npatches, nthreads)
-        o_corr = Array{Function, 3}(undef, object.nλ, patches.npatches, nthreads)
-        smoothing_kernel = zeros(FTYPE, build_dim, build_dim)
-        smooth = Vector{Function}(undef, nthreads)
-        unsmooth = Vector{Function}(undef, nthreads)
-        P = zeros(Complex{FTYPE}, build_dim, build_dim, patches.npatches, object.nλ, nthreads)
-        p = zeros(Complex{FTYPE}, build_dim, build_dim, patches.npatches, object.nλ, nthreads)
-        object_patch = zeros(FTYPE, build_dim, build_dim, nthreads)
-        image_temp_big = zeros(FTYPE, build_dim, build_dim, nthreads)
-        c = zeros(FTYPE, build_dim, build_dim, nthreads)
-        d = zeros(Complex{FTYPE}, build_dim, build_dim, nthreads)
-        d2 = zeros(FTYPE, build_dim, build_dim, nthreads)
-        psf = zeros(FTYPE, build_dim, build_dim, patches.npatches, object.nλ, nthreads)
-        psf_temp = zeros(FTYPE, build_dim, build_dim, nthreads)
-        containers_builddim_cplx = zeros(Complex{FTYPE}, build_dim, build_dim, nthreads)
-        containers_builddim_real = zeros(FTYPE, build_dim, build_dim, nthreads)
-        containers_sdim_real = zeros(FTYPE, atmosphere.dim, atmosphere.dim, nthreads)
-        containers_sdim_cplx = zeros(Complex{FTYPE}, atmosphere.dim, atmosphere.dim, nthreads)
-        ndatasets = length(observations)
-        r = Vector{Array{FTYPE, 3}}(undef, ndatasets)
-        ω = Vector{Array{FTYPE, 3}}(undef, ndatasets)
-        mask_acf = Vector{Matrix{FTYPE}}(undef, ndatasets)
-        image_temp_small = Vector{Array{FTYPE, 3}}(undef, ndatasets)
-        containers_pdim_real = Vector{Array{FTYPE, 3}}(undef, ndatasets)
-        containers_pdim_cplx = Vector{Array{Complex{FTYPE}, 3}}(undef, ndatasets)
+        smoothing_kernel = Matrix{FTYPE}(undef, build_dim, build_dim)
+        channel_smooth = Channel{Function}(nthreads)
+        channel_unsmooth = Channel{Function}(nthreads)
+        channel_ft = Channel{Function}(nthreads)
+        channel_ift = Channel{Function}(nthreads)
+        channel_convolve = Channel{Function}(nthreads)
+        channel_correlate = Channel{Function}(nthreads)
+        channel_autocorr = Channel{Function}(nthreads)
+        foreach(1:nthreads) do ~
+            put!(channel_smooth, () -> nothing)
+            put!(channel_unsmooth, () -> nothing)
+            put!(channel_ft, setup_fft(FTYPE, build_dim)[1])
+            put!(channel_ift, setup_ifft(Complex{FTYPE}, build_dim)[1])
+            put!(channel_convolve, setup_conv(FTYPE, build_dim))
+            put!(channel_correlate, setup_corr(FTYPE, build_dim))
+            put!(channel_autocorr, setup_autocorr(FTYPE, build_dim))            
+        end
 
+        channel_layerdim_real = Channel{Matrix{FTYPE}}(2*nthreads)
+        channel_builddim_cplx_4d = Channel{Array{Complex{FTYPE}, 4}}(2*nthreads)
+        channel_builddim_cplx = Channel{Matrix{Complex{FTYPE}}}(2*nthreads)
+        foreach(1:2*nthreads) do ~
+            put!(channel_layerdim_real, zeros(FTYPE, atmosphere.dim, atmosphere.dim))
+            put!(channel_builddim_cplx_4d, zeros(Complex{FTYPE}, build_dim, build_dim, patches.npatches, object.nλ))
+            put!(channel_builddim_cplx, zeros(Complex{FTYPE}, build_dim, build_dim))
+        end
+
+        if (wavefront_parameter == :phase) && (frozen_flow==true)
+            wavefront_zeros = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
+            channel_wavefront_gradient_buffer = Channel{Array{FTYPE, 4}}(nthreads)
+            channel_wavefront_gradient_accumulator = Channel{Array{FTYPE, 4}}(Inf)
+        elseif (wavefront_parameter == :opd) && (frozen_flow==true)
+            wavefront_zeros = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers)
+            channel_wavefront_gradient_buffer = Channel{Array{FTYPE, 3}}(nthreads)
+            channel_wavefront_gradient_accumulator = Channel{Array{FTYPE, 3}}(Inf)
+        elseif (wavefront_parameter == :phase) && (frozen_flow==false)
+            wavefront_zeros = zeros(FTYPE, build_dim, build_dim, sum([observations[dd].nepochs for dd=1:ndatasets]), atmosphere.nλ)
+            channel_wavefront_gradient_buffer = Channel{Array{FTYPE, 4}}(nthreads)
+            channel_wavefront_gradient_accumulator = Channel{Array{FTYPE, 4}}(Inf)
+        end
+        channel_object_gradient_buffer = Channel{Array{FTYPE, 3}}(nthreads)
+        channel_object_gradient_accumulator = Channel{Array{FTYPE, 3}}(Inf)
+        channel_layerdim_cplx = Channel{Matrix{Complex{FTYPE}}}(nthreads)
+        channel_builddim_real_4d = Channel{Array{FTYPE, 4}}(nthreads)
+        foreach(1:nthreads) do ~
+            put!(channel_builddim_real_4d, zeros(FTYPE, build_dim, build_dim, patches.npatches, object.nλ))
+            put!(channel_layerdim_cplx, zeros(Complex{FTYPE}, atmosphere.dim, atmosphere.dim))
+            put!(channel_object_gradient_buffer, zeros(FTYPE, build_dim, build_dim, object.nλ))
+            put!(channel_wavefront_gradient_buffer, wavefront_zeros)
+        end
+
+        channel_builddim_real = Channel{Matrix{FTYPE}}(10*nthreads)
+        foreach(1:10*nthreads) do ~
+            put!(channel_builddim_real, zeros(FTYPE, build_dim, build_dim))
+        end
+
+        ndatasets = length(observations)
+        mask_acf = Vector{Matrix{FTYPE}}(undef, ndatasets)
         extractor = Vector{Array{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}, 4}}(undef, ndatasets)
         extractor_adj = Vector{Array{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}, 4}}(undef, ndatasets)
         refraction = Matrix{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}}(undef, ndatasets, nλtotal)
         refraction_adj = Matrix{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}}(undef, ndatasets, nλtotal)
+        channel_imagedim = Vector{Channel{Matrix{FTYPE}}}(undef, ndatasets)
         for dd=1:ndatasets
-            r[dd] = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
-            ω[dd] = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
-            mask_acf[dd] = ones(FTYPE, observations[dd].dim, observations[dd].dim)
-            mask_acf[dd][observations[dd].dim÷2+1, observations[dd].dim÷2+1] = 0
-            image_temp_small[dd] = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
-            containers_pdim_real[dd] = zeros(FTYPE, observations[dd].dim, observations[dd].dim, nthreads)
-            containers_pdim_cplx[dd] = zeros(Complex{FTYPE}, observations[dd].dim, observations[dd].dim, nthreads)
-            scaleby_wavelength = [observations[dd].detector.λ_nyquist / λtotal[w] for w=1:nλtotal]
-            scaleby_height = layer_scale_factors(atmosphere.heights, object.range)            
-            refraction[dd, :] .= create_refraction_operator.(λtotal, atmosphere.λ_ref, observations[dd].ζ, observations[dd].detector.pixscale, build_dim, FTYPE=FTYPE)
-            refraction_adj[dd, :] .= create_refraction_adjoint.(λtotal, atmosphere.λ_ref, observations[dd].ζ, observations[dd].detector.pixscale, build_dim, FTYPE=FTYPE)
-            extractor[dd] = create_patch_extractors(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
-            extractor_adj[dd] = create_patch_extractors_adjoint(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
+            obs = observations[dd]
+            channel_imagedim[dd] = Channel{Matrix{FTYPE}}(3*nthreads)
+            foreach(1:3*nthreads) do ~
+                put!(channel_imagedim[dd], zeros(FTYPE, obs.dim, obs.dim))
+            end
+
+            mask_acf[dd] = ones(FTYPE, obs.dim, obs.dim)
+            mask_acf[dd][obs.dim÷2+1, obs.dim÷2+1] = 0
+            scaleby_wavelength = [obs.detector.λ_nyquist / λtotal[w] for w=1:nλtotal]
+            scaleby_height = layer_scale_factors(atmosphere.heights, object.range)
+            refraction[dd, :] .= create_refraction_operator.(λtotal, atmosphere.λ_ref, obs.ζ, obs.detector.pixscale, build_dim, FTYPE=FTYPE)
+            refraction_adj[dd, :] .= create_refraction_adjoint.(λtotal, atmosphere.λ_ref, obs.ζ, obs.detector.pixscale, build_dim, FTYPE=FTYPE)
+            extractor[dd] = create_patch_extractors(patches, atmosphere, obs, object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
+            extractor_adj[dd] = create_patch_extractors_adjoint(patches, atmosphere, obs, object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
         end
 
-        return new{FTYPE}(extractor, extractor_adj, refraction, refraction_adj, fft_threads, ifft_threads, conv_threads, corr_threads, autocorr_threads, A, ϕ_full, ϕ_slices, ϕ_composite, o_conv, o_corr, smoothing_kernel, smooth, unsmooth, P, p, c, d, d2, psf, psf_temp, object_patch, image_temp_big, image_temp_small, r, ω, mask_acf, ϵ_threads, g_threads_obj, g_threads_wf, containers_builddim_real, containers_builddim_cplx, containers_sdim_real, containers_sdim_cplx, containers_pdim_real, containers_pdim_cplx)
+        return new{FTYPE}(extractor, extractor_adj, refraction, refraction_adj, mask_acf, smoothing_kernel, channel_object_gradient_buffer, channel_object_gradient_accumulator, channel_wavefront_gradient_buffer, channel_wavefront_gradient_accumulator, channel_smooth, channel_unsmooth, channel_object_preconv, channel_object_precorr, channel_imagedim, channel_builddim_real, channel_builddim_real_4d, channel_builddim_cplx, channel_builddim_cplx_4d, channel_layerdim_real, channel_layerdim_cplx, channel_ft, channel_ift, channel_convolve, channel_correlate, channel_autocorr)
     end
 end
 
@@ -234,10 +253,16 @@ mutable struct Reconstruction{T<:AbstractFloat}
             fwhm_schedule=ExponentialSchedule(maxFWHM, niter_mfbd, minFWHM),
             regularizers=nothing,
             verb=true,
-            mfbd_verb_level="full",
+            mfbd_verb_level=:full,
             plot=true,
             FTYPE = gettype(atmosphere)
         )
+
+        (wavefront_parameter in VALID_WAVEFRONT_PARAMETERS) ? nothing : error("$(wavefront_parameter) not a valid wavefront parameter. Must be one of $(VALID_WAVEFRONT_PARAMETERS)")
+        (minimization_scheme in VALID_MINIMIZATION_SCHEMES) ? nothing : error("$(minimization_scheme) not a valid minimization scheme. Must be one of $(VALID_MINIMIZATION_SCHEMES)")
+        (noise_model in VALID_NOISEMODELS) ? nothing : error("$(minimization_scheme) not a valid noise model. Must be one of $(VALID_NOISEMODELS)")
+        (mfbd_verb_level in keys(VERB_LEVELS)) ? nothing : error("$(mfbd_verb_level) not a valid verbosity level. Must be one of $(keys(VERB_LEVELS))")
+
         nλtotal = nλ * nλint
         λ = (nλ == 1) ? [mean([λmax, λmin])] : collect(range(λmin, stop=λmax, length=nλ))
         λtotal = (nλtotal == 1) ? [mean([λmax, λmin])] : collect(range(λmin, stop=λmax, length=nλtotal))
@@ -294,7 +319,7 @@ mutable struct Reconstruction{T<:AbstractFloat}
             end
             reconstruction = new{FTYPE}(λ, λtotal, nλ, nλint, nλtotal, Δλ, Δλtotal, ndatasets, build_dim, wavefront_parameter, minimization_scheme, noise_model, weight_function, fg_object, gradient_object, fg_wf, gradient_wf, frozen_flow, niter_mfbd, indx_boot, niter_boot, maxiter, ϵ, grtol, frtol, xrtol, maxeval, regularizers, smoothing, minFWHM, maxFWHM, fwhm_schedule, helpers, verb_levels, plot, figs)
         else
-            reconstruction = new{FTYPE}(λ, λtotal, nλ, nλint, nλtotal, Δλ, Δλtotal, ndatasets, build_dim, wavefront_parameter, minimization_scheme, noise_model, weight_function, fg_object, gradient_object, fg_wf, gradient_wf, niter_mfbd, indx_boot, niter_boot, maxiter, ϵ, grtol, frtol, xrtol, maxeval, regularizers, smoothing, minFWHM, maxFWHM, fwhm_schedule, helpers, verb_levels, plot)
+            reconstruction = new{FTYPE}(λ, λtotal, nλ, nλint, nλtotal, Δλ, Δλtotal, ndatasets, build_dim, wavefront_parameter, minimization_scheme, noise_model, weight_function, fg_object, gradient_object, fg_wf, gradient_wf, frozen_flow, niter_mfbd, indx_boot, niter_boot, maxiter, ϵ, grtol, frtol, xrtol, maxeval, regularizers, smoothing, minFWHM, maxFWHM, fwhm_schedule, helpers, verb_levels, plot)
         end
 
         if verb == true
@@ -340,11 +365,11 @@ function reconstruct!(reconstruction, observations, atmosphere, object, patches;
             end
 
             ## Reconstruct Phase
-            crit_wf = (x, g) -> reconstruction.fg_wf(x, g, current_observations, atmosphere, patches, reconstruction, object)
-            vmlmb!(crit_wf, getproperty(atmosphere, reconstruction.wavefront_parameter), verb=reconstruction.verb_levels["vo"], fmin=0, mem=5, maxiter=reconstruction.maxiter, gtol=(0, reconstruction.grtol), ftol=(0, reconstruction.frtol), xtol=(0, reconstruction.xrtol), maxeval=reconstruction.maxeval["wf"])
-            if (reconstruction.plot == true) && (reconstruction.frozen_flow == true)
-                update_layer_figure(atmosphere, reconstruction)
-            end
+            # crit_wf = (x, g) -> reconstruction.fg_wf(x, g, current_observations, atmosphere, patches, reconstruction, object)
+            # vmlmb!(crit_wf, getproperty(atmosphere, reconstruction.wavefront_parameter), verb=reconstruction.verb_levels["vo"], fmin=0, mem=5, maxiter=reconstruction.maxiter, gtol=(0, reconstruction.grtol), ftol=(0, reconstruction.frtol), xtol=(0, reconstruction.xrtol), maxeval=reconstruction.maxeval["wf"])
+            # if (reconstruction.plot == true) && (reconstruction.frozen_flow == true)
+            #     update_layer_figure(atmosphere, reconstruction)
+            # end
 
             ## Reconstruct Object
             if reconstruction.verb_levels["vm"] == true
@@ -449,9 +474,11 @@ end
     helpers = reconstruction.helpers
     for w=1:object.nλ
         for np=1:patches.npatches
-            for tid=1:Threads.nthreads()
-                helpers.o_conv[w, np, tid] = preconvolve(patches.w[:, :, np] .* object.object[:, :, w])
-                helpers.o_corr[w, np, tid] = precorrelate(patches.w[:, :, np] .* object.object[:, :, w])
+            foreach(1:Threads.nthreads()) do ~
+                take!(helpers.channel_object_preconv[w, np])
+                take!(helpers.channel_object_precorr[w, np])
+                put!(helpers.channel_object_preconv[w, np], preconvolve(patches.w[:, :, np] .* object.object[:, :, w]))
+                put!(helpers.channel_object_precorr[w, np], precorrelate(patches.w[:, :, np] .* object.object[:, :, w]))
             end
         end
     end
@@ -459,14 +486,18 @@ end
 
 @views function preconvolve_smoothing(reconstruction)
     helpers = reconstruction.helpers
-    for tid=1:Threads.nthreads()
+    channel_smooth = helpers.channel_smooth
+    channel_unsmooth = helpers.channel_unsmooth
+    do_nothing(out, in) = nothing
+    foreach(1:Threads.nthreads()) do ~
+        take!(channel_smooth)
+        take!(channel_unsmooth)
         if reconstruction.smoothing == true
-            helpers.smooth[tid] = preconvolve(fftshift(helpers.smoothing_kernel))
-            helpers.unsmooth[tid] = precorrelate(fftshift(helpers.smoothing_kernel))
+            put!(channel_smooth, preconvolve(fftshift(helpers.smoothing_kernel)))
+            put!(channel_unsmooth, precorrelate(fftshift(helpers.smoothing_kernel)))
         else
-            do_nothing(out, in) = nothing
-            helpers.smooth[tid] = do_nothing
-            helpers.unsmooth[tid] = do_nothing
+            put!(channel_smooth, do_nothing)
+            put!(channel_unsmooth, do_nothing)            
         end
     end
 end

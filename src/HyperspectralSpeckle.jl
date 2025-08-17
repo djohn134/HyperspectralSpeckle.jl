@@ -46,7 +46,7 @@ export get_refraction, refraction_at_layer_pix, refraction_at_detector_pix, laye
 
 ## criterion
 include("mle.jl")
-export loglikelihood_gaussian
+export loglikelihood_gaussian, loglikelihood_gaussian!
 export fg_object_mle, gradient_object_mle_gaussiannoise!, gradient_object_mle_mixednoise!
 export fg_phase_mle, fg_phase_ffm_mle, gradient_phase_ffm_mle_gaussiannoise!, gradient_phase_ffm_mle_mixednoise!
 export fg_opd_mle, fg_opd_ffm_mle, gradient_opd_ffm_mle_gaussiannoise!, gradient_opd_ffm_mle_mixednoise!

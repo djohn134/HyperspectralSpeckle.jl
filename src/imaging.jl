@@ -121,61 +121,6 @@ end
     A .= mask .* abs.(Uout)
 end
 
-# @views function create_detector_images(patches, observations, atmosphere, object; build_dim=object.dim, noise=false, verb=true)
-#     FTYPE = gettype(patches)
-#     nthreads = Threads.nthreads()
-#     psfs = zeros(FTYPE, build_dim, build_dim, nthreads)
-#     psf_temp = zeros(FTYPE, build_dim, build_dim, nthreads)
-#     image_big_temp = zeros(FTYPE, build_dim, build_dim, nthreads)
-#     object_patch = zeros(FTYPE, build_dim, build_dim, nthreads)
-#     P = zeros(Complex{FTYPE}, build_dim, build_dim, nthreads)
-#     p = zeros(Complex{FTYPE}, build_dim, build_dim, nthreads)
-#     A = ones(FTYPE, build_dim, build_dim, nthreads)
-#     ϕ_slices = zeros(FTYPE, build_dim, build_dim, nthreads)
-#     ϕ_composite = zeros(FTYPE, build_dim, build_dim, nthreads)
-#     iffts = [setup_ifft(Complex{FTYPE}, build_dim)[1] for tid=1:Threads.nthreads()]
-#     convs = [setup_conv(FTYPE, build_dim) for tid=1:Threads.nthreads()]
-
-#     scaleby_height = layer_scale_factors(atmosphere.heights, object.range)
-#     scaleby_wavelength = atmosphere.λ_nyquist ./ atmosphere.λ
-#     if verb == true
-#         println("Creating $(observations.dim)×$(observations.dim) images for $(observations.nepochs) times and $(observations.nsubaps) subaps")
-#     end
-#     DTYPE = gettypes(observations.detector)[end]
-#     image_small_temp = zeros(FTYPE, observations.dim, observations.dim, nthreads)
-#     refraction = [create_refraction_operator(atmosphere.λ[w], atmosphere.λ_ref, observations.ζ, observations.detector.pixscale, build_dim, FTYPE=FTYPE) for w=1:atmosphere.nλ]
-#     extractors = create_patch_extractors(patches, atmosphere, observations, object, scaleby_wavelength, scaleby_height, build_dim=build_dim)    
-#     images_float = zeros(FTYPE, observations.dim, observations.dim, nthreads)
-#     observations.images = zeros(DTYPE, observations.dim, observations.dim, observations.nsubaps, observations.nepochs)
-#     create_detector_images!(patches, observations, atmosphere, object, images_float, image_small_temp, image_big_temp, psfs, psf_temp, object_patch, A, P, p, refraction, iffts, convs, ϕ_composite, ϕ_slices, extractors, noise=noise)
-# end
-
-# @views function create_detector_images!(patches, observations, atmosphere, object, images_float, image_small_temp, image_big_temp, psf, psf_temp, object_patch, A, P, p, refraction, iffts, convs, ϕ_composite, ϕ_slices, extractors; noise=false)
-#     FTYPE = gettype(observations)
-#     nλint = 1
-#     smoothing!(out, in) = nothing
-#     prog = Progress(observations.nepochs*observations.nsubexp*observations.nsubaps)
-#     Threads.@threads :static for t=1:observations.nepochs
-#         tid = Threads.threadid()
-#         for n=1:observations.nsubaps
-#             fill!(images_float[:, :, tid], zero(FTYPE))
-#             for tsub=1:observations.nsubexp 
-#                 create_radiant_energy_pre_detector!(images_float[:, :, tid], image_small_temp[:, :, tid], image_big_temp[:, :, tid], psf[:, :, tid], psf_temp[:, :, tid], observations.masks.scale_psfs, object.object, patches.w, object_patch[:, :, tid], observations.aperture_area, observations.detector.exptime / observations.nsubexp, observations.masks.masks[:, :, n, :], A[:, :, tid], P[:, :, tid], p[:, :, tid], refraction, iffts[tid], convs[tid], object.background / observations.dim^2 / observations.nsubaps, atmosphere.transmission, observations.optics.response, ϕ_composite[:, :, tid], observations.phase_static, ϕ_slices[:, :, tid], atmosphere.phase, smoothing!, atmosphere.nlayers, extractors[(t-1)*observations.nsubexp + tsub, :, :, :], atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, atmosphere.nλ, nλint, atmosphere.Δλ)
-#                 next!(prog)
-#             end
-
-#             images_float[:, :, tid] .= max.(zero(FTYPE), images_float[:, :, tid])
-#             if noise == true
-#                 add_noise!(images_float[:, :, tid], observations.detector.rn, true, FTYPE=FTYPE)
-#             end
-#             images_float[:, :, tid] .= min.(images_float[:, :, tid], observations.detector.saturation)
-#             images_float[:, :, tid] ./= observations.detector.gain  # Converts e⁻ to counts
-#             convert_image(observations.images[:, :, n, t], images_float[:, :, tid]) # Converts floating-point counts to integer at bitdepth of detector
-#         end
-#     end
-#     finish!(prog)
-# end
-
 @views function create_detector_images(patches, observations, atmosphere, object; build_dim=object.dim, noise=false, verb=true)
     FTYPE = gettype(patches)
     nthreads = Threads.nthreads()
@@ -208,7 +153,7 @@ end
     extractors = create_patch_extractors(patches, atmosphere, observations, object, scaleby_wavelength, scaleby_height, build_dim=build_dim)    
     observations.images = zeros(DTYPE, observations.dim, observations.dim, observations.nsubaps, observations.nepochs)
     if verb == true
-        println("Creating $(observations.dim)×$(observations.dim) images for $(observations.nepochs) times and $(observations.nsubaps) subaps")
+        println("Creating $(observations.dim)×$(observations.dim) images for $(observations.nepochs) times ($(observations.nsubexp) subexposures each) and $(observations.nsubaps) subaps")
     end
     create_detector_images!(patches, observations, atmosphere, object, refraction, extractors, channel_builddim_real, channel_builddim_cplx, channel_builddim_ones, channel_imagedim, channel_iffts, channel_convs, noise=noise)
 end
@@ -218,7 +163,7 @@ end
     nλint = 1
     smoothing!(out, in) = nothing
     prog = Progress(observations.nepochs*observations.nsubexp*observations.nsubaps)
-    tmap(1:observations.nepochs) do t
+    tforeach(1:observations.nepochs) do t
         image_float = take!(channel_imagedim)
         image_small = take!(channel_imagedim)
         image_big = take!(channel_builddim_real)

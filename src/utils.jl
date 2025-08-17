@@ -376,9 +376,6 @@ end
 function setup_fft(::Type{T}, dim) where {T}
     pft, container = select_fft_plan(T, dim)
     function fft!(out, in)
-        # fftshift!(container, in)
-        # mul!(container, pft, container)
-        # ifftshift!(out, container)
         mul!(out, pft, in)
     end
 
@@ -397,9 +394,6 @@ function setup_ifft(::Type{T}, dim) where {T}
     scale_ifft = T(dim)
     pift, container = select_ifft_plan(T, dim)
     function ifft!(out, in)
-        # ifftshift!(container, in)
-        # mul!(container, pift, container)
-        # fftshift!(out, container)
         mul!(out, pift, in)
         out .*= scale_ifft
     end

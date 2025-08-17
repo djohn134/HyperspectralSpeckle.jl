@@ -8,7 +8,7 @@ FTYPE = Float32;
 # folder = "/home/dan/Desktop/JASS_2024/tests";
 folder = "test"
 id = ""
-verb = false
+verb = true
 ###########################################
 
 ##### Size, Timestep, and Wavelengths #####
@@ -18,10 +18,10 @@ wfs_dim = 64
 nsubaps_side = 6
 nλ = 1
 λ_ref = 500.0e-9  # m
-λmin = 500.0e-9  # m
+λmin = λ_nyquist = 500.0e-9
 λmax = 500.0e-9  # m
 λ = collect(range(λmin, stop=λmax, length=nλ))  # m
-λ_nyquist = minimum(λ)  # m
+# λ_nyquist = minimum(λ)  # m
 Δλ = (nλ == 1) ? 1.0 : (λmax - λmin) / (nλ - 1)  # m
 resolution = mean(λ) / Δλ
 ###########################################
@@ -39,12 +39,12 @@ qefile = "../data/qe/prime-95b_qe.dat"
 rn = 2.0  # e⁻
 saturation = 30000.0  # e⁻
 gain = saturation / (typemax(DTYPE))  # e⁻ / ADU
-DTYPE = UInt16
+DTYPE = FTYPE
 exptime = 5e-3  # sec
-nepochs = 30
+nepochs = 2
 times = collect(0:nepochs-1) .* exptime
 # times = [0.0]
-noise = true
+noise = false
 ζ = 0.0  # deg
 ########## Create Optical System ##########
 filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
@@ -77,13 +77,14 @@ observations_full = Observations(
     D_inner_frac=D_inner_frac,
     times=times,
     nsubaps_side=1,
+    nsubexp=1,
     dim=image_dim,
     ϕ_static=ϕ_static_full,
     verb=verb,
     FTYPE=FTYPE,
     label="Full Aperture"
 )
-# observations = [observations_full]
+observations = [observations_full]
 optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 detector_wfs = Detector(
     qe=qe,
@@ -110,6 +111,7 @@ observations_wfs = Observations(
     times=times,
     nsubaps_side=nsubaps_side,
     dim=wfs_dim,
+    nsubexp=1,
     ϕ_static=ϕ_static_wfs,
     build_dim=observations_full.dim,
     verb=verb,
@@ -120,7 +122,7 @@ nsubaps = observations_wfs.masks.nsubaps
 observations_wfs.masks.scale_psfs = observations_full.masks.scale_psfs
 observations = [observations_full, observations_wfs]
 header = create_header(λ, units="unitless")
-# [writefits(observations[dd].masks.masks, "$(folder)/masks_ISH$(observations[dd].masks.nsubaps_side)x$(observations[dd].masks.nsubaps_side)$(id).fits", header=header) for dd=1:length(observations)]
+[writefits(observations[dd].masks.masks, "$(folder)/masks_ISH$(observations[dd].masks.nsubaps_side)x$(observations[dd].masks.nsubaps_side)$(id).fits", header=header) for dd=1:length(observations)]
 ###########################################
 
 ############ Object Parameters ############
@@ -130,8 +132,8 @@ object_arr = repeat(block_reduce(readfits(objectfile, FTYPE=FTYPE), image_dim), 
 ~, spectrum = solar_spectrum(λ=λ)
 mag = 4.0
 background_mag = 20.0  # mag / arcsec^2
-irradiance = mag2flux(mag, filter, ζ=ζ)  # ph / s / m^2
-background = mag2flux(background_mag, filter, ζ=ζ)  # ph / s / m^2 / arcsec^2
+irradiance = 1 #  mag2flux(mag, filter, ζ=ζ)  # ph / s / m^2
+background = 0 #  mag2flux(background_mag, filter, ζ=ζ)  # ph / s / m^2 / arcsec^2
 background *= fov^2  # ph / s / m^2
 object_range = 500.0e3  # m
 ############## Create object ##############
@@ -148,9 +150,9 @@ object = Object(
     FTYPE=FTYPE
 )
 header = create_header(λ, units="ph/s/m^2/m")
-# writefits(object.object, "$(folder)/object_truth_spectral$(id).fits", header=header)
+writefits(object.object, "$(folder)/object_truth_spectral$(id).fits", header=header)
 header = create_header(λ, units="ph/s/m^2")
-# writefits(dropdims(sum(object.object, dims=3), dims=3)*Δλ, "$(folder)/object_truth$(id).fits", header=header)
+writefits(dropdims(sum(object.object, dims=3), dims=3)*Δλ, "$(folder)/object_truth$(id).fits", header=header)
 ###########################################
 
 ########## Anisopatch Parameters ##########
@@ -168,7 +170,7 @@ wind_direction = [45.0, 125.0, 135.0]  # deg
 wind = [wind_speed wind_direction]
 nlayers = length(heights)
 propagate = false
-# seeds = [713, 1212, 525118]
+seeds = [713, 1212, 525118]
 Dmeta = D .+ (fov/206265) .* heights
 sampling_nyquist_mperpix = layer_nyquist_sampling_mperpix(D, image_dim, nlayers)
 sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heights, image_dim)
@@ -195,7 +197,7 @@ atmosphere = Atmosphere(
 ########## Create phase screens ###########
 # opd_smooth = calculate_smoothed_opd(atmosphere, observations_full)
 header = create_header(λ, units="rad")
-# writefits(atmosphere.phase, "$(folder)/Dr0_$(round(Int64, Dr0_ref_vertical))_phase_full$(id).fits", header=header)
+writefits(atmosphere.phase, "$(folder)/Dr0_$(round(Int64, Dr0_ref_vertical))_phase_full$(id).fits", header=header)
 # writefits(opd_smooth, "$(folder)/Dr0_$(round(Int64, Dr0_composite))_opd_full_smooth$(id).fits")
 ###########################################
 
