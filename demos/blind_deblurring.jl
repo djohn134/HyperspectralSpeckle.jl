@@ -29,7 +29,7 @@ resolution = mean(λ) / Δλ
 ###########################################
 
 ########## Anisopatch Parameters ##########
-isoplanatic = false
+isoplanatic = true
 patch_dim = 64
 ###### Create Anisoplanatic Patches #######
 patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FTYPE=FTYPE, verb=verb)
@@ -46,7 +46,7 @@ saturation = 30000.0  # e⁻
 gain = saturation / (typemax(DTYPE))  # e⁻ / ADU
 qefile = "../data/qe/prime-95b_qe.dat"
 ~, qe = readqe(qefile, λ=λ)
-rn = 1.0
+rn = 2.0
 exptime = 5e-3
 ζ = 0.0
 ########## Create Optical System ##########
@@ -115,19 +115,18 @@ observations_wfs = Observations(
 nsubaps = observations_wfs.masks.nsubaps
 observations_wfs.masks.scale_psfs = observations_full.masks.scale_psfs
 observations = [observations_wfs, observations_full]
-# background = mean(fit_background(observations_full))
-background = 0
+background = mean(fit_background(observations_full))
 ###########################################
 
 
 ############ Object Parameters ############
 object_range = 500.0e3  # km
 ############## Create object ##############
-# object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background/observations_full.dim^2, 0)
-# object_arr = repeat(object_arr, 1, 1, nλ)
-# object_arr ./= sum(object_arr)
-# object_arr .*= (mean(sum(observations_full.images, dims=(1, 2, 3))) - background)
-object_arr = readfits("$(folder)/object_truth_spectral.fits")
+object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background/observations_full.dim^2, 0)
+object_arr = repeat(object_arr, 1, 1, nλ)
+object_arr ./= sum(object_arr)
+object_arr .*= (mean(sum(observations_full.images, dims=(1, 2, 3))) - background)
+# object_arr = 0 .* readfits("$(folder)/object_truth_spectral.fits")
 ~, spectrum = solar_spectrum(λ=λ)
 object = Object(
     object_arr,
@@ -171,11 +170,11 @@ atmosphere = Atmosphere(
     verb=verb
 )
 ######### Set phase screens start #########
-# atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
-atmosphere.phase = readfits("test/Dr0_20_phase_full.fits")
+atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
+# atmosphere.phase = readfits("test/Dr0_20_phase_full.fits")
 ###########################################
-# object.object .*= observations_full.detector.gain / (observations_full.detector.exptime * observations_full.aperture_area * mean(observations_full.optics.response) * mean(atmosphere.transmission))
-# object.background *= observations_full.detector.gain / (observations_full.detector.exptime * observations_full.aperture_area * mean(observations_full.optics.response) * mean(atmosphere.transmission))
+object.object .*= observations_full.detector.gain / (observations_full.detector.exptime * observations_full.aperture_area * mean(observations_full.optics.response) * mean(atmosphere.transmission))
+object.background *= observations_full.detector.gain / (observations_full.detector.exptime * observations_full.aperture_area * mean(observations_full.optics.response) * mean(atmosphere.transmission))
 
 ######### Reconstruction Object ###########
 reconstruction = Reconstruction(
@@ -195,7 +194,7 @@ reconstruction = Reconstruction(
     minimization_scheme=:mle,
     noise_model=:gaussian,
     maxeval=Dict("wf"=>10000, "object"=>10000),
-    smoothing=false,
+    smoothing=true,
     # fwhm_schedule=ConstantSchedule(0.5),
     build_dim=image_dim,
     verb=verb,

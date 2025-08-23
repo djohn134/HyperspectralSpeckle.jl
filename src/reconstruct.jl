@@ -56,13 +56,11 @@ mutable struct Helpers{T<:AbstractFloat}
     mask_acf::Vector{Matrix{T}}
     smoothing_kernel::Matrix{T}
     channel_object_gradient_buffer::Channel{Array{T, 3}}
-    channel_object_gradient_accumulator::Channel{Array{T, 3}}
     channel_wavefront_gradient_buffer::Union{Channel{Array{T, 3}}, Channel{Array{T, 4}}}
-    channel_wavefront_gradient_accumulator::Union{Channel{Array{T, 3}}, Channel{Array{T, 4}}}
-    channel_smooth::Channel{Function}
-    channel_unsmooth::Channel{Function}
-    channel_object_preconv::Matrix{Channel{Function}}
-    channel_object_precorr::Matrix{Channel{Function}}
+    channel_smooth::Union{Channel{Preconvolve{T}}, Channel{Nothing}}
+    channel_unsmooth::Union{Channel{Precorrelate{T}}, Channel{Nothing}}
+    channel_object_preconv::Channel{Matrix{Preconvolve{T}}}
+    channel_object_precorr::Channel{Matrix{Precorrelate{T}}}
     channel_imagedim::Vector{Channel{Matrix{T}}}
     channel_builddim_real::Channel{Matrix{T}}
     channel_builddim_real_4d::Channel{Array{T, 4}}
@@ -72,8 +70,8 @@ mutable struct Helpers{T<:AbstractFloat}
     channel_layerdim_cplx::Channel{Matrix{Complex{T}}}
     channel_ft::Channel{Function}
     channel_ift::Channel{Function}
-    channel_convolve::Channel{Function}
-    channel_correlate::Channel{Function}
+    channel_convolve::Channel{ConvolutionPlan{T}}
+    channel_correlate::Channel{CorrelationPlan{T}}
     channel_autocorr::Channel{Function}
     function Helpers(
             atmosphere,
@@ -81,7 +79,8 @@ mutable struct Helpers{T<:AbstractFloat}
             object,
             patches,
             wavefront_parameter,
-            frozen_flow;
+            frozen_flow,
+            smoothing;
             λtotal=atmosphere.λ,
             build_dim=size(object.object, 1),
             ndatasets=length(observations),
@@ -91,34 +90,45 @@ mutable struct Helpers{T<:AbstractFloat}
         nλtotal = length(λtotal)
         nthreads = Threads.nthreads()
 
-        channel_object_preconv = Matrix{Channel{Function}}(undef, object.nλ, patches.npatches)
-        channel_object_precorr = Matrix{Channel{Function}}(undef, object.nλ, patches.npatches)
-        for w=1:object.nλ
-            for np=1:patches.npatches
-                channel_object_preconv[w, np] = Channel{Function}(nthreads)
-                channel_object_precorr[w, np] = Channel{Function}(nthreads)
-                foreach(1:nthreads) do ~
-                    put!(channel_object_preconv[w, np], () -> nothing)
-                    put!(channel_object_precorr[w, np], () -> nothing)
-                end
-            end
+        channel_object_preconv = Channel{Matrix{Preconvolve{FTYPE}}}(nthreads)
+        channel_object_precorr = Channel{Matrix{Precorrelate{FTYPE}}}(nthreads)
+        foreach(1:nthreads) do ~
+            conv_template = Matrix{Preconvolve{FTYPE}}(undef, object.nλ, patches.npatches)
+            corr_template = Matrix{Precorrelate{FTYPE}}(undef, object.nλ, patches.npatches)
+            fill!(conv_template, Preconvolve(zeros(FTYPE, build_dim, build_dim)))
+            fill!(corr_template, Precorrelate(zeros(FTYPE, build_dim, build_dim)))
+            put!(channel_object_preconv, conv_template)
+            put!(channel_object_precorr, corr_template)
         end
 
-        smoothing_kernel = Matrix{FTYPE}(undef, build_dim, build_dim)
-        channel_smooth = Channel{Function}(nthreads)
-        channel_unsmooth = Channel{Function}(nthreads)
+        if smoothing == true
+            smoothing_kernel = Matrix{FTYPE}(undef, build_dim, build_dim)
+            channel_smooth = Channel{Preconvolve{FTYPE}}(nthreads)
+            channel_unsmooth = Channel{Precorrelate{FTYPE}}(nthreads)
+            foreach(1:nthreads) do ~
+                put!(channel_smooth, Preconvolve(smoothing_kernel))
+                put!(channel_unsmooth, Precorrelate(smoothing_kernel))
+            end
+        else
+            smoothing_kernel = FTYPE[;;]
+            channel_smooth = Channel{Nothing}(nthreads)
+            channel_unsmooth = Channel{Nothing}(nthreads)
+            foreach(1:nthreads) do ~
+                put!(channel_smooth, nothing)
+                put!(channel_unsmooth, nothing)
+            end
+        end
+        
         channel_ft = Channel{Function}(nthreads)
         channel_ift = Channel{Function}(nthreads)
-        channel_convolve = Channel{Function}(nthreads)
-        channel_correlate = Channel{Function}(nthreads)
+        channel_convolve = Channel{ConvolutionPlan{FTYPE}}(nthreads)
+        channel_correlate = Channel{CorrelationPlan{FTYPE}}(nthreads)
         channel_autocorr = Channel{Function}(nthreads)
         foreach(1:nthreads) do ~
-            put!(channel_smooth, () -> nothing)
-            put!(channel_unsmooth, () -> nothing)
             put!(channel_ft, setup_fft(FTYPE, build_dim)[1])
             put!(channel_ift, setup_ifft(Complex{FTYPE}, build_dim)[1])
-            put!(channel_convolve, setup_conv(FTYPE, build_dim))
-            put!(channel_correlate, setup_corr(FTYPE, build_dim))
+            put!(channel_convolve, ConvolutionPlan(build_dim, FTYPE=FTYPE))
+            put!(channel_correlate, CorrelationPlan(build_dim, FTYPE=FTYPE))
             put!(channel_autocorr, setup_autocorr(FTYPE, build_dim))            
         end
 
@@ -134,18 +144,14 @@ mutable struct Helpers{T<:AbstractFloat}
         if (wavefront_parameter == :phase) && (frozen_flow==true)
             wavefront_zeros = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
             channel_wavefront_gradient_buffer = Channel{Array{FTYPE, 4}}(nthreads)
-            channel_wavefront_gradient_accumulator = Channel{Array{FTYPE, 4}}(Inf)
         elseif (wavefront_parameter == :opd) && (frozen_flow==true)
             wavefront_zeros = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers)
             channel_wavefront_gradient_buffer = Channel{Array{FTYPE, 3}}(nthreads)
-            channel_wavefront_gradient_accumulator = Channel{Array{FTYPE, 3}}(Inf)
         elseif (wavefront_parameter == :phase) && (frozen_flow==false)
             wavefront_zeros = zeros(FTYPE, build_dim, build_dim, sum([observations[dd].nepochs for dd=1:ndatasets]), atmosphere.nλ)
             channel_wavefront_gradient_buffer = Channel{Array{FTYPE, 4}}(nthreads)
-            channel_wavefront_gradient_accumulator = Channel{Array{FTYPE, 4}}(Inf)
         end
         channel_object_gradient_buffer = Channel{Array{FTYPE, 3}}(nthreads)
-        channel_object_gradient_accumulator = Channel{Array{FTYPE, 3}}(Inf)
         channel_layerdim_cplx = Channel{Matrix{Complex{FTYPE}}}(nthreads)
         channel_builddim_real_4d = Channel{Array{FTYPE, 4}}(nthreads)
         foreach(1:nthreads) do ~
@@ -184,7 +190,7 @@ mutable struct Helpers{T<:AbstractFloat}
             extractor_adj[dd] = create_patch_extractors_adjoint(patches, atmosphere, obs, object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
         end
 
-        return new{FTYPE}(extractor, extractor_adj, refraction, refraction_adj, mask_acf, smoothing_kernel, channel_object_gradient_buffer, channel_object_gradient_accumulator, channel_wavefront_gradient_buffer, channel_wavefront_gradient_accumulator, channel_smooth, channel_unsmooth, channel_object_preconv, channel_object_precorr, channel_imagedim, channel_builddim_real, channel_builddim_real_4d, channel_builddim_cplx, channel_builddim_cplx_4d, channel_layerdim_real, channel_layerdim_cplx, channel_ft, channel_ift, channel_convolve, channel_correlate, channel_autocorr)
+        return new{FTYPE}(extractor, extractor_adj, refraction, refraction_adj, mask_acf, smoothing_kernel, channel_object_gradient_buffer, channel_wavefront_gradient_buffer, channel_smooth, channel_unsmooth, channel_object_preconv, channel_object_precorr, channel_imagedim, channel_builddim_real, channel_builddim_real_4d, channel_builddim_cplx, channel_builddim_cplx_4d, channel_layerdim_real, channel_layerdim_cplx, channel_ft, channel_ift, channel_convolve, channel_correlate, channel_autocorr)
     end
 end
 
@@ -289,7 +295,8 @@ mutable struct Reconstruction{T<:AbstractFloat}
             object,
             patches,
             wavefront_parameter,
-            frozen_flow;
+            frozen_flow,
+            smoothing;
             λtotal=λtotal,
         );
 
@@ -346,7 +353,9 @@ function reconstruct!(reconstruction, observations, atmosphere, object, patches;
         for current_iter=1:reconstruction.niter_mfbd
             absolute_iter = (b-1)*reconstruction.niter_mfbd + current_iter        
             update_hyperparams(reconstruction, absolute_iter)
-            preconvolve_smoothing(reconstruction)
+            if reconstruction.smoothing == true
+                preconvolve_smoothing(reconstruction)
+            end
             preconvolve_object(reconstruction, patches, object)
 
             if reconstruction.verb_levels["vm"] == true
@@ -365,11 +374,11 @@ function reconstruct!(reconstruction, observations, atmosphere, object, patches;
             end
 
             ## Reconstruct Phase
-            # crit_wf = (x, g) -> reconstruction.fg_wf(x, g, current_observations, atmosphere, patches, reconstruction, object)
-            # vmlmb!(crit_wf, getproperty(atmosphere, reconstruction.wavefront_parameter), verb=reconstruction.verb_levels["vo"], fmin=0, mem=5, maxiter=reconstruction.maxiter, gtol=(0, reconstruction.grtol), ftol=(0, reconstruction.frtol), xtol=(0, reconstruction.xrtol), maxeval=reconstruction.maxeval["wf"])
-            # if (reconstruction.plot == true) && (reconstruction.frozen_flow == true)
-            #     update_layer_figure(atmosphere, reconstruction)
-            # end
+            crit_wf = (x, g) -> reconstruction.fg_wf(x, g, current_observations, atmosphere, patches, reconstruction, object)
+            vmlmb!(crit_wf, getproperty(atmosphere, reconstruction.wavefront_parameter), verb=reconstruction.verb_levels["vo"], fmin=0, mem=5, maxiter=reconstruction.maxiter, gtol=(0, reconstruction.grtol), ftol=(0, reconstruction.frtol), xtol=(0, reconstruction.xrtol), maxeval=reconstruction.maxeval["wf"])
+            if (reconstruction.plot == true) && (reconstruction.frozen_flow == true)
+                update_layer_figure(atmosphere, reconstruction)
+            end
 
             ## Reconstruct Object
             if reconstruction.verb_levels["vm"] == true
@@ -472,15 +481,18 @@ end
 
 @views function preconvolve_object(reconstruction, patches, object)
     helpers = reconstruction.helpers
-    for w=1:object.nλ
-        for np=1:patches.npatches
-            foreach(1:Threads.nthreads()) do ~
-                take!(helpers.channel_object_preconv[w, np])
-                take!(helpers.channel_object_precorr[w, np])
-                put!(helpers.channel_object_preconv[w, np], preconvolve(patches.w[:, :, np] .* object.object[:, :, w]))
-                put!(helpers.channel_object_precorr[w, np], precorrelate(patches.w[:, :, np] .* object.object[:, :, w]))
+    foreach(1:Threads.nthreads()) do ~
+        object_preconv = take!(helpers.channel_object_preconv)
+        object_precorr = take!(helpers.channel_object_precorr)
+        for w=1:object.nλ
+            for np=1:patches.npatches
+                object_patch = patches.w[:, :, np] .* object.object[:, :, w]
+                object_preconv[w, np] = Preconvolve(object_patch)
+                object_precorr[w, np] = Precorrelate(object_patch)
             end
         end
+        put!(helpers.channel_object_preconv, object_preconv)
+        put!(helpers.channel_object_precorr, object_precorr)
     end
 end
 
@@ -488,17 +500,11 @@ end
     helpers = reconstruction.helpers
     channel_smooth = helpers.channel_smooth
     channel_unsmooth = helpers.channel_unsmooth
-    do_nothing(out, in) = nothing
     foreach(1:Threads.nthreads()) do ~
         take!(channel_smooth)
         take!(channel_unsmooth)
-        if reconstruction.smoothing == true
-            put!(channel_smooth, preconvolve(fftshift(helpers.smoothing_kernel)))
-            put!(channel_unsmooth, precorrelate(fftshift(helpers.smoothing_kernel)))
-        else
-            put!(channel_smooth, do_nothing)
-            put!(channel_unsmooth, do_nothing)            
-        end
+        put!(channel_smooth, Preconvolve(fftshift(helpers.smoothing_kernel)))
+        put!(channel_unsmooth, Precorrelate(fftshift(helpers.smoothing_kernel)))
     end
 end
 
@@ -509,5 +515,7 @@ function update_hyperparams(reconstruction, iter)
     regularizers.βo *= regularizers.βo_schedule(iter)
     regularizers.βwf *= regularizers.βwf_schedule(iter)
     fwhm = reconstruction.fwhm_schedule(iter)
-    helpers.smoothing_kernel .= gaussian_kernel(reconstruction.build_dim, fwhm, FTYPE=FTYPE)
+    if reconstruction.smoothing == true
+        helpers.smoothing_kernel .= gaussian_kernel(reconstruction.build_dim, fwhm, FTYPE=FTYPE)
+    end
 end

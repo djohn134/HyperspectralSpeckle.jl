@@ -41,10 +41,10 @@ saturation = 30000.0  # e⁻
 gain = saturation / (typemax(DTYPE))  # e⁻ / ADU
 DTYPE = FTYPE
 exptime = 5e-3  # sec
-nepochs = 2
+nepochs = 31
 times = collect(0:nepochs-1) .* exptime
 # times = [0.0]
-noise = false
+noise = true
 ζ = 0.0  # deg
 ########## Create Optical System ##########
 filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
@@ -76,15 +76,15 @@ observations_full = Observations(
     D=D,
     D_inner_frac=D_inner_frac,
     times=times,
+    # nsubexp=1,
     nsubaps_side=1,
-    nsubexp=1,
     dim=image_dim,
     ϕ_static=ϕ_static_full,
     verb=verb,
     FTYPE=FTYPE,
     label="Full Aperture"
 )
-observations = [observations_full]
+# observations = [observations_full]
 optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
 detector_wfs = Detector(
     qe=qe,
@@ -109,9 +109,9 @@ observations_wfs = Observations(
     D=D,
     area=aperture_area,
     times=times,
+    # nsubexp=1,
     nsubaps_side=nsubaps_side,
     dim=wfs_dim,
-    nsubexp=1,
     ϕ_static=ϕ_static_wfs,
     build_dim=observations_full.dim,
     verb=verb,
@@ -132,8 +132,8 @@ object_arr = repeat(block_reduce(readfits(objectfile, FTYPE=FTYPE), image_dim), 
 ~, spectrum = solar_spectrum(λ=λ)
 mag = 4.0
 background_mag = 20.0  # mag / arcsec^2
-irradiance = 1 #  mag2flux(mag, filter, ζ=ζ)  # ph / s / m^2
-background = 0 #  mag2flux(background_mag, filter, ζ=ζ)  # ph / s / m^2 / arcsec^2
+irradiance = mag2flux(mag, filter, ζ=ζ)  # ph / s / m^2
+background = mag2flux(background_mag, filter, ζ=ζ)  # ph / s / m^2 / arcsec^2
 background *= fov^2  # ph / s / m^2
 object_range = 500.0e3  # m
 ############## Create object ##############
