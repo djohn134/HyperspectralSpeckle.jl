@@ -144,6 +144,7 @@ mutable struct Observations{T<:AbstractFloat, S<:Real}
     dim::Int64
     images::Array{S, 4}
     entropy::Matrix{T}
+    psfs::Array{T, 3}
     model_images::Array{T, 4}
     w::Vector{Int64}
     positions::Array{T, 4}
@@ -155,7 +156,7 @@ mutable struct Observations{T<:AbstractFloat, S<:Real}
             D_inner_frac=0,
             area=pi*(D/2)^2*(1-D_inner_frac^2),
             times=[],
-            nsubexp=1,
+            nsubexp=-1,
             nepochs=0,
             nsubaps_side=1,
             dim=0,
@@ -195,7 +196,7 @@ mutable struct Observations{T<:AbstractFloat, S<:Real}
             D_inner_frac=0,
             area=pi*(D/2)^2*(1-D_inner_frac^2),
             nsubaps_side=1,
-            nsubexp=1,
+            nsubexp=-1,
             ϕ_static=[;;;],
             build_dim=size(images, 1),
             label="",

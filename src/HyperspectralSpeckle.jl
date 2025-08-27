@@ -46,16 +46,17 @@ export get_refraction, refraction_at_layer_pix, refraction_at_detector_pix, laye
 
 ## criterion
 include("mle.jl")
-export loglikelihood_gaussian
+export loglikelihood_gaussian, loglikelihood_gaussian!
 export fg_object_mle, gradient_object_mle_gaussiannoise!, gradient_object_mle_mixednoise!
-export fg_phase_mle, fg_phase_ffm_mle, gradient_phase_ffm_mle_gaussiannoise!, gradient_phase_ffm_mle_mixednoise!
-export fg_opd_mle, fg_opd_ffm_mle, gradient_opd_ffm_mle_gaussiannoise!, gradient_opd_ffm_mle_mixednoise!
+export fg_phase_mle, fg_phase_mle, gradient_phase_mle_gaussiannoise!, gradient_phase_mle_mixednoise!
+export fg_phase_ffm_mle, fg_phase_ffm_mle, gradient_phase_ffm_mle_gaussiannoise!, gradient_phase_ffm_mle_mixednoise!
+export fg_opd_ffm_mle, fg_opd_ffm_mle, gradient_opd_ffm_mle_gaussiannoise!, gradient_opd_ffm_mle_mixednoise!
 
 ## mrl
-include("mrl.jl")
-export mrl
-export fg_object_mrl, fg_opd_mrl, fg_phase_mrl
-export gradient_object_mrl_gaussiannoise!, gradient_opd_mrl_gaussiannoise!, gradient_phase_mrl_gaussiannoise!
+# include("mrl.jl")
+# export mrl
+# export fg_object_mrl, fg_opd_mrl, fg_phase_mrl
+# export gradient_object_mrl_gaussiannoise!, gradient_opd_mrl_gaussiannoise!, gradient_phase_mrl_gaussiannoise!
 
 ## regularization
 include("regularization.jl")
@@ -68,17 +69,17 @@ export ReconstructionFigures
 export plot_object, plot_layers, plot_opd, plot_phase
 export update_object_figure, update_layer_figure, update_opd_figure, update_phase_figure, savefig
 
+## utils
+include("utils.jl")
+export gettype, create_header, writefits, writefile, writeobject, readobject, readfile, readqe, readimages, readmasks, readfits, readspectrum, readtransmission, vega_spectrum, solar_spectrum
+export gaussian_kernel, calculate_entropy, calculate_ssim, shift_and_add, fit_plane, crop, smooth_to_rmse!, bartlett_hann2d, super_gaussian, block_reduce!, block_reduce, block_replicate!, block_replicate, stack2mosaic, create_zernike_screen, smooth_to_resolution, interpolate1d, center_of_gravity
+export zeros!, ones!, ft, ift, setup_fft, setup_ifft, ConvolutionPlan, Preconvolution, convolve!, CorrelationPlan, Precorrelate, correlate!, setup_autocorr, setup_operator_mul
+
 ## reconstruct
 include("reconstruct.jl")
 export Reconstruction, Helpers, PatchHelpers
 export gaussian_weighting, mixed_weighting, reconstruct!, height_solve!
 export ConstantSchedule, LinearSchedule, ReciprocalSchedule, ExponentialSchedule
-
-## utils
-include("utils.jl")
-export gettype, create_header, writefits, writefile, writeobject, readobject, readfile, readqe, readimages, readmasks, readfits, readspectrum, readtransmission, vega_spectrum, solar_spectrum
-export gaussian_kernel, calculate_entropy, calculate_ssim, shift_and_add, fit_plane, crop, smooth_to_rmse!, bartlett_hann2d, super_gaussian, block_reduce!, block_reduce, block_replicate!, block_replicate, stack2mosaic, create_zernike_screen, smooth_to_resolution, interpolate1d, center_of_gravity
-export setup_fft, setup_ifft, setup_conv, preconvolve, setup_corr, precorrelate, setup_autocorr, setup_operator_mul
 
 ## logos
 include("logos.jl")

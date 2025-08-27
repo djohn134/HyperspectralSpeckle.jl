@@ -1,12 +1,100 @@
 using JLD2
+using FFTW
 using FITSIO
 using Statistics
 using DelimitedFiles
 using ZernikePolynomials
 import Interpolations: LinearInterpolation, Line
+FFTW.set_provider!("fftw")
+FFTW.set_num_threads(1)
+
+
+mutable struct ConvolutionPlan{T<:Number}
+    scale::T
+    ft1::Union{FFTW.rFFTWPlan{T, -1, false, 2, Tuple{Int64, Int64}}, FFTW.cFFTWPlan{Complex{T}, -1, false, 2, UnitRange{Int64}}}
+    ft2::Union{FFTW.rFFTWPlan{T, -1, false, 2, Tuple{Int64, Int64}}, FFTW.cFFTWPlan{Complex{T}, -1, false, 2, UnitRange{Int64}}}
+    ift1::Union{AbstractFFTs.ScaledPlan{Complex{T}, FFTW.cFFTWPlan{Complex{T}, 1, false, 2, UnitRange{Int64}}, T}, AbstractFFTs.ScaledPlan{Complex{T}, FFTW.rFFTWPlan{Complex{T}, 1, false, 2, UnitRange{Int64}}, T}}
+    container1::Matrix{Complex{T}}
+    container2::Matrix{Complex{T}}
+    function ConvolutionPlan(dim; FTYPE=Float64)
+        scale_conv = FTYPE(dim)
+        ft1, container1 = select_fft_plan(FTYPE, dim)
+        ft2, container2 = select_fft_plan(FTYPE, dim)
+        ift1, ~ = select_ifft_plan(FTYPE, dim)
+        return new{FTYPE}(scale_conv, ft1, ft2, ift1, container1, container2)
+    end
+end
+
+function convolve!(out::AbstractMatrix{T}, plan::ConvolutionPlan{T}, in1::AbstractMatrix{T}, in2::AbstractMatrix{T}) where {T<:Number}
+    mul!(plan.container1, plan.ft1, in1)
+    mul!(plan.container2, plan.ft2, in2)
+    plan.container2 .*= plan.container1
+    mul!(out, plan.ift1, plan.container2)
+end
+
+mutable struct Preconvolve{T<:Number}
+    kernel::Matrix{T}
+    plan::ConvolutionPlan{T}
+    function Preconvolve(kernel)
+        dim = size(kernel, 1)
+        FTYPE = eltype(kernel)
+        plan = ConvolutionPlan(dim, FTYPE=FTYPE)
+        mul!(plan.container1, plan.ft1, kernel)
+        return new{FTYPE}(kernel, plan)
+    end
+end
+
+function convolve!(out::AbstractMatrix{T}, preconv::Preconvolve{T}, in::AbstractMatrix{T}) where {T<:Number}
+    mul!(preconv.plan.container2, preconv.plan.ft2, in)
+    preconv.plan.container2 .*= preconv.plan.container1
+    mul!(out, preconv.plan.ift1, preconv.plan.container2)
+end
+
+mutable struct CorrelationPlan{T<:Number}
+    scale::T
+    ft1::Union{FFTW.rFFTWPlan{T, -1, false, 2, Tuple{Int64, Int64}}, FFTW.cFFTWPlan{Complex{T}, -1, false, 2, UnitRange{Int64}}}
+    ft2::Union{FFTW.rFFTWPlan{T, -1, false, 2, Tuple{Int64, Int64}}, FFTW.cFFTWPlan{Complex{T}, -1, false, 2, UnitRange{Int64}}}
+    ift1::Union{AbstractFFTs.ScaledPlan{Complex{T}, FFTW.cFFTWPlan{Complex{T}, 1, false, 2, UnitRange{Int64}}, T}, AbstractFFTs.ScaledPlan{Complex{T}, FFTW.rFFTWPlan{Complex{T}, 1, false, 2, UnitRange{Int64}}, T}}
+    container1::Matrix{Complex{T}}
+    container2::Matrix{Complex{T}}
+    function CorrelationPlan(dim; FTYPE=Float64)
+        scale_corr = FTYPE(dim)
+        ft1, container1 = select_fft_plan(FTYPE, dim)
+        ft2, container2 = select_fft_plan(FTYPE, dim)
+        ift1, ~ = select_ifft_plan(FTYPE, dim)
+        return new{FTYPE}(scale_corr, ft1, ft2, ift1, container1, container2)
+    end
+end
+
+function correlate!(out::AbstractMatrix{T}, plan::CorrelationPlan{T}, in1::AbstractMatrix{T}, in2::AbstractMatrix{T}) where {T<:Number}
+    mul!(plan.container1, plan.ft1, in1)
+    mul!(plan.container2, plan.ft2, in2)
+    conj!(plan.container2)
+    plan.container1 .*= plan.container2
+    mul!(out, plan.ift1, plan.container1)
+end
+
+mutable struct Precorrelate{T<:Number}
+    kernel::Matrix{T}
+    plan::CorrelationPlan{T}
+    function Precorrelate(kernel)
+        dim = size(kernel, 1)
+        FTYPE = eltype(kernel)
+        plan = CorrelationPlan(dim, FTYPE=FTYPE)
+        mul!(plan.container1, plan.ft1, kernel)
+        conj!(plan.container1)
+        return new{FTYPE}(kernel, plan)
+    end
+end
+
+function correlate!(out::AbstractMatrix{T}, precorr::Precorrelate{T}, in::AbstractMatrix{T}) where {T<:Number}
+    mul!(precorr.plan.container2, precorr.plan.ft2, in)
+    precorr.plan.container2 .*= precorr.plan.container1
+    mul!(out, precorr.plan.ift1, precorr.plan.container2)
+end
 
 function gettype(T)
-    return typeof(T).parameters[1]
+    return gettypes(T)[1]
 end
 
 function gettypes(T)
@@ -37,13 +125,18 @@ function create_header(observations::Observations{<:Number, <:Number})
     return header
 end
 
-function writefits(x, filename; verb=true, header=nothing)
-    f = FITS(filename, "w")
-    if header !== nothing
-        header = FITSHeader(header...)
+function writefits(x, filename; verb=true, header=nothing, times=nothing)
+    FITS(filename, "w") do f
+        if !isnothing(header)
+            header = FITSHeader(header...)
+        end
+        write(f, x, header=header)
+
+        if !isnothing(times)
+            write(f, times)
+        end
     end
-    write(f, x, header=header)
-    close(f)
+    
     if verb == true
         print("Written to "); printstyled("$(filename)\n", color=:red)
     end
@@ -107,17 +200,24 @@ function readqe(filename; λ=[])
 end
 
 @views function readimages(file::String; FTYPE=Float64)
-    images = readfits(file, FTYPE=FTYPE)
+    f = FITS(file)
+    hdr = read_header(file)
+
+    images = FTYPE.(read(f[1]))
     images = repeat(images, 1, 1, 1, 1)
     nsubaps = size(images, 3);
     nepochs = size(images, 4);
     dim = size(images, 1);
     
-    hdr = read_header(file)
     exptime = hdr["EXPTIME"]
     elapsed = hdr["TELAPSE"]
     tstart = hdr["TIME-START"]
-    times = collect(tstart:elapsed:tstart+(nepochs-1)*elapsed)   
+    times = try
+        times = read(f[2])
+    catch
+        times = []
+    end
+
     return images, nsubaps, nepochs, dim, exptime, times
 end
 
@@ -332,7 +432,7 @@ function readspectrum(file)
 end
 
 function ft(x)
-    return fftshift(fft(ifftshft(x)))
+    return fftshift(fft(ifftshift(x)))
 end
 
 function ift(x)
@@ -376,9 +476,6 @@ end
 function setup_fft(::Type{T}, dim) where {T}
     pft, container = select_fft_plan(T, dim)
     function fft!(out, in)
-        # fftshift!(container, in)
-        # mul!(container, pft, container)
-        # ifftshift!(out, container)
         mul!(out, pft, in)
     end
 
@@ -397,83 +494,11 @@ function setup_ifft(::Type{T}, dim) where {T}
     scale_ifft = T(dim)
     pift, container = select_ifft_plan(T, dim)
     function ifft!(out, in)
-        # ifftshift!(container, in)
-        # mul!(container, pift, container)
-        # fftshift!(out, container)
         mul!(out, pift, in)
         out .*= scale_ifft
     end
 
     return ifft!, container
-end
-
-function setup_conv(::Type{T}, dim) where {T}
-    scale_conv = T(dim)
-    ft1, container1 = setup_fft(T, dim)
-    ft2, container2 = setup_fft(T, dim)
-    ift1, ~ = setup_ifft(T, dim)
-    function conv!(out, in1, in2)
-        ft1(container1, in1)
-        ft2(container2, in2)
-        container1 .*= container2
-        ift1(out, container1)
-        out ./= scale_conv
-    end
-
-    return conv!
-end
-
-function preconvolve(in)
-    dim = size(in, 1)
-    FTYPE = eltype(in)
-    scale_conv = FTYPE(dim)
-    ft1, container1 = setup_fft(FTYPE, dim)
-    ft2, container2 = setup_fft(FTYPE, dim)
-    ift1, ~ = setup_ifft(FTYPE, dim)
-    ft2(container2, in)
-    function preconv!(out, in)
-        ft1(container1, in)
-        container1 .*= container2
-        ift1(out, container1)
-        out ./= scale_conv
-    end
-
-    return preconv!
-end
-
-function setup_corr(::Type{T}, dim) where {T}
-    scale_corr = T(dim)
-    ft1, container1 = setup_fft(T, dim)
-    ft2, container2 = setup_fft(T, dim)
-    ift1, ~ = setup_ifft(T, dim)
-    function corr!(out, in1, in2)
-        ft1(container1, in1)
-        ft2(container2, in2)
-        container1 .*= conj.(container2)
-        ift1(out, container1)
-        out ./= scale_corr
-    end
-
-    return corr!
-end
-
-function precorrelate(in)
-    dim = size(in, 1)
-    FTYPE = eltype(in)
-    scale_corr = FTYPE(dim)
-    ft1, container1 = setup_fft(FTYPE, dim)
-    ft2, container2 = setup_fft(FTYPE, dim)
-    ift1, ~ = setup_ifft(FTYPE, dim)
-    ft2(container2, in)
-    conj!(container2)
-    function precorr!(out, in)
-        ft1(container1, in)
-        container1 .*= container2
-        ift1(out, container1)
-        out ./= scale_corr
-    end
-    
-    return precorr!
 end
 
 function setup_autocorr(::Type{T}, dim) where {T<:Real}
@@ -623,4 +648,12 @@ function center_of_gravity(image)
     Δx = sum(xx .* image) / sum(image)
     Δy = sum(yy .* image) / sum(image)
     return Δx, Δy
+end
+
+function zeros!(A::AbstractArray{T}) where {T<:Number}
+    fill!(A, zero(eltype(A)))
+end
+
+function ones!(A::AbstractArray{T}) where {T<:Number}
+    fill!(A, one(eltype(A)))
 end

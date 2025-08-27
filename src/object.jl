@@ -8,6 +8,7 @@ mutable struct Object{T<:AbstractFloat}
     dim::Int64
     λ::Vector{T}
     nλ::Int64
+    nλint::Int64
     Δλ::T
     range::T
     fov::T
@@ -21,6 +22,7 @@ mutable struct Object{T<:AbstractFloat}
             irradiance=Inf,
             background=0,
             λ=[Inf], 
+            nλint=1,
             dim=0, 
             fov=0,
             object_range=0,
@@ -39,7 +41,7 @@ mutable struct Object{T<:AbstractFloat}
             object_arr ./= sum(object_arr)
             object_arr .*= irradiance / Δλ
         end
-        object = new{FTYPE}(dim, λ, nλ, Δλ, object_range, fov, sampling_arcsecperpix, spectrum, irradiance, background, object_arr)
+        object = new{FTYPE}(dim, λ, nλ, nλint, Δλ, object_range, fov, sampling_arcsecperpix, spectrum, irradiance, background, object_arr)
         if verb == true
             display(object)
         end

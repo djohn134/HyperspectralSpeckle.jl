@@ -65,7 +65,7 @@ end
             for np=1:patches.npatches
                 for w=1:atmosphere.nλ
                     for l=1:atmosphere.nlayers
-                        center = get_center(patches.positions[:, np], observations.positions[:, (t-1)*observations.nsubexp + tsub, l, w], object.sampling_arcsecperpix, atmosphere.sampling_nyquist_mperpix[l], atmosphere.heights[l], scaleby_wavelength[w])
+                        center = get_center(patches.positions[:, np], observations.positions[:, (t-1)*observations.nsubexp + tsub, l, w], object.sampling_arcsecperpix, atmosphere.sampling_nyquist_mperpix[l], atmosphere.heights[l], scaleby_wavelength[w])                    
                         extractor[(t-1)*observations.nsubexp + tsub, np, l, w] = create_extractor_operator(center, atmosphere.dim, build_dim, scaleby_height[l], scaleby_wavelength[w], FTYPE=FTYPE)
                     end
                 end

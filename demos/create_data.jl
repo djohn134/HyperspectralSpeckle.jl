@@ -18,10 +18,10 @@ wfs_dim = 64
 nsubaps_side = 6
 nλ = 1
 λ_ref = 500.0e-9  # m
-λmin = 500.0e-9  # m
+λmin = λ_nyquist = 500.0e-9
 λmax = 500.0e-9  # m
 λ = collect(range(λmin, stop=λmax, length=nλ))  # m
-λ_nyquist = minimum(λ)  # m
+# λ_nyquist = minimum(λ)  # m
 Δλ = (nλ == 1) ? 1.0 : (λmax - λmin) / (nλ - 1)  # m
 resolution = mean(λ) / Δλ
 ###########################################
@@ -39,12 +39,11 @@ qefile = "../data/qe/prime-95b_qe.dat"
 rn = 2.0  # e⁻
 saturation = 30000.0  # e⁻
 gain = saturation / (typemax(DTYPE))  # e⁻ / ADU
-DTYPE = UInt16
+DTYPE = FTYPE
 exptime = 5e-3  # sec
-nepochs = 10
+nepochs = 11
 times = collect(0:nepochs-1) .* exptime
-# times = [0.0]
-noise = true
+noise = false
 ζ = 0.0  # deg
 ########## Create Optical System ##########
 filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
@@ -76,6 +75,7 @@ observations_full = Observations(
     D=D,
     D_inner_frac=D_inner_frac,
     times=times,
+    nsubexp=1,
     nsubaps_side=1,
     dim=image_dim,
     ϕ_static=ϕ_static_full,
@@ -108,6 +108,7 @@ observations_wfs = Observations(
     D=D,
     area=aperture_area,
     times=times,
+    nsubexp=1,
     nsubaps_side=nsubaps_side,
     dim=wfs_dim,
     ϕ_static=ϕ_static_wfs,
@@ -157,7 +158,7 @@ writefits(dropdims(sum(object.object, dims=3), dims=3)*Δλ, "$(folder)/object_t
 isoplanatic = false
 patch_dim = 64
 ###### Create Anisoplanatic Patches #######
-patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FTYPE=FTYPE)
+patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FTYPE=FTYPE, verb=verb)
 ###########################################
 
 ########## Atmosphere Parameters ##########
@@ -168,7 +169,7 @@ wind_direction = [45.0, 125.0, 135.0]  # deg
 wind = [wind_speed wind_direction]
 nlayers = length(heights)
 propagate = false
-# seeds = [713, 1212, 525118]
+seeds = [713, 1212, 525118]
 Dmeta = D .+ (fov/206265) .* heights
 sampling_nyquist_mperpix = layer_nyquist_sampling_mperpix(D, image_dim, nlayers)
 sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heights, image_dim)
@@ -188,8 +189,9 @@ atmosphere = Atmosphere(
     λ_nyquist=λ_nyquist,
     λ_ref=λ_ref,
     propagate=propagate,
-    # seeds=seeds, 
-    FTYPE=FTYPE
+    seeds=seeds, 
+    FTYPE=FTYPE,
+    verb=verb
 )
 ########## Create phase screens ###########
 # opd_smooth = calculate_smoothed_opd(atmosphere, observations_full)
@@ -199,6 +201,17 @@ writefits(atmosphere.phase, "$(folder)/Dr0_$(round(Int64, Dr0_ref_vertical))_pha
 ###########################################
 
 ########## Create Full-Ap images ##########
-[create_detector_images(patches, observations[dd], atmosphere, object, build_dim=image_dim, noise=noise) for dd=1:length(observations)]
-[writefits(observations[dd].images, "$(folder)/Dr0_$(round(Int64, Dr0_ref_vertical))_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_images$(id).fits", header=create_header(observations[dd])) for dd=1:length(observations)]
+# using BenchmarkTools
+# @btime [create_detector_images($patches, $observations[dd], $atmosphere, $object, build_dim=$image_dim, noise=$noise, verb=$verb) for dd=1:length(observations)]
+[create_detector_images(patches, observations[dd], atmosphere, object, build_dim=image_dim, noise=noise, verb=verb) for dd=1:length(observations)]
+[writefits(observations[dd].images, "$(folder)/Dr0_$(round(Int64, Dr0_ref_vertical))_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_images$(id).fits", header=create_header(observations[dd]), times=observations[dd].times) for dd=1:length(observations)]
 ###########################################
+
+## Isoplanatic
+# Naive threadix: 1.278 s (546486 allocations: 137.16 MiB)
+# OhMyThreads.Channel: 1.264 s (533701 allocations: 144.43 MiB)
+#                      1.240 s (536749 allocations: 144.49 MiB)
+## Anisoplanatic
+# Naive threadix: 197.684 s (751385 allocations: 144.23 MiB)
+# OhMyThreads.Channel: 205.700 s (748062 allocations: 151.27 MiB)
+#                      102.606 s (743478 allocations: 151.16 MiB)      

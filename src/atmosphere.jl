@@ -29,6 +29,7 @@ mutable struct Atmosphere{T<:AbstractFloat}
     dim::Int64
     A::Array{T, 4}
     phase::Array{T, 4}
+    opd::Array{T, 3}
     function Atmosphere(
         λ,
         observations,
@@ -59,7 +60,7 @@ mutable struct Atmosphere{T<:AbstractFloat}
         if !isnan(Dr0) && any(isnan.(r0))
             r0_ref_composite = observations[1].D / (Dr0 * secd(observations[1].ζ))
             r0, Cn2 = composite_r0_to_layers(r0_ref_composite, heights, λ_ref, observations[1].ζ)
-            τ0 = calculate_coherence_time(λ_ref, observations[1].ζ, Cn2, wind, heights)
+            τ0 = calculate_coherence_time(λ_ref, observations[1].ζ, r0, Cn2, wind, heights)
         end
         
         atmosphere = new{FTYPE}(nlayers, l0, L0, Cn2, r0, τ0, wind, heights, transmission, sampling_nyquist_mperpix, sampling_nyquist_arcsecperpix, λ, λ_nyquist, λ_ref, nλ, Δλ, propagate, seeds)
@@ -69,7 +70,7 @@ mutable struct Atmosphere{T<:AbstractFloat}
         calculate_atmosphere_parameters!(atmosphere, observations, object, patches, verb=verb)
 
         if create_screens == true
-            create_phase_screens!(atmosphere)
+            create_phase_screens!(atmosphere, verb=verb)
             atmosphere.phase .*= atmosphere.masks
         end
         return atmosphere
@@ -223,9 +224,11 @@ end
 end
 
 function calculate_atmosphere_parameters!(atmosphere, observations, object, patches; verb=true)
-    for dd=1:length(observations)
-        nsubexp = round(observations[dd].detector.exptime / atmosphere.τ0)
-        observations[dd].nsubexp = isnan(nsubexp) ? 1 : nsubexp
+    for obs in observations
+        if obs.nsubexp == -1
+            nsubexp = ceil(obs.detector.exptime / atmosphere.τ0)
+            obs.nsubexp = isnan(nsubexp) ? 1 : nsubexp
+        end
     end
     calculate_screen_size!(atmosphere, observations, object, patches, verb=verb)
     calculate_pupil_positions!(atmosphere, observations, verb=verb)
@@ -271,7 +274,7 @@ end
                     for np=1:patches.npatches
                         for w=1:atmosphere.nλ
                             for l=1:atmosphere.nlayers
-                                position2phase!(buffer[:, :, tid], nyquist_mask[:, :, 1, w], deextractors[(t-1)*observations[dd].nsubexp + tsub, np, l, w])
+                                mul!(buffer[:, :, tid], deextractors[(t-1)*observations[dd].nsubexp + tsub, np, l, w], nyquist_mask[:, :, 1, w])
                                 layer_mask[:, :, l, w, tid] .= layer_mask[:, :, l, w, tid] .|| round.(Bool, buffer[:, :, tid])
                             end
                         end
@@ -467,7 +470,13 @@ function composite_r0_to_layers(r0_target, heights, λ, ζ)
     return r0_layers, Cn2
 end
 
-@views function calculate_coherence_time(λ, ζ, Cn2, wind, heights)
-    freq_greenwood = 2.31 * mean(λ)^(-6/5) * (secd(ζ) * integrate(heights, Cn2 .* wind[:, 1].^(5/3)))^(3/5)
-    return 1/freq_greenwood
+@views function calculate_coherence_time(λ, ζ, r0, Cn2, wind, heights)
+    if length(heights) > 1
+        freq_greenwood = 2.31 * mean(λ)^(-6/5) * (secd(ζ) * integrate(heights, Cn2 .* wind[:, 1].^(5/3)))^(3/5)
+        coherence_time = 1 / freq_greenwood
+    elseif length(heights) == 1
+        coherence_time = 0.314 * r0[1] / wind[1, 1]
+    end
+
+    return coherence_time
 end
