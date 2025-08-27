@@ -48,47 +48,38 @@ function ReciprocalSchedule(maxval, minval)
     return reciprocal
 end
 
-mutable struct Helpers{T<:AbstractFloat}
-    extractor::Vector{Array{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}, 4}}
-    extractor_adj::Vector{Array{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}, 4}}
-    refraction::Matrix{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}}
-    refraction_adj::Matrix{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}}
-    mask_acf::Vector{Matrix{T}}
-    smoothing_kernel::Matrix{T}
-    channel_object_gradient_buffer::Channel{Array{T, 3}}
-    channel_wavefront_gradient_buffer::Union{Channel{Array{T, 3}}, Channel{Array{T, 4}}}
-    channel_smooth::Union{Channel{Preconvolve{T}}, Channel{Nothing}}
-    channel_unsmooth::Union{Channel{Precorrelate{T}}, Channel{Nothing}}
-    channel_object_preconv::Channel{Matrix{Preconvolve{T}}}
-    channel_object_precorr::Channel{Matrix{Precorrelate{T}}}
-    channel_imagedim::Vector{Channel{Matrix{T}}}
-    channel_builddim_real::Channel{Matrix{T}}
-    channel_builddim_real_4d::Channel{Array{T, 4}}
-    channel_builddim_cplx::Channel{Matrix{Complex{T}}}
-    channel_builddim_cplx_4d::Channel{Array{Complex{T}, 4}}
-    channel_layerdim_real::Channel{Matrix{T}}
-    channel_layerdim_cplx::Channel{Matrix{Complex{T}}}
-    channel_ft::Channel{Function}
-    channel_ift::Channel{Function}
-    channel_convolve::Channel{ConvolutionPlan{T}}
-    channel_correlate::Channel{CorrelationPlan{T}}
-    channel_autocorr::Channel{Function}
-    function Helpers(
-            atmosphere,
+struct BufferChannels{T<:AbstractFloat}
+    object_gradient_buffer::Channel{Array{T, 3}}
+    wavefront_gradient_buffer::Union{Channel{Array{T, 3}}, Channel{Array{T, 4}}}
+    smooth::Union{Channel{Preconvolve{T}}, Channel{Nothing}}
+    unsmooth::Union{Channel{Precorrelate{T}}, Channel{Nothing}}
+    object_preconv::Channel{Matrix{Preconvolve{T}}}
+    object_precorr::Channel{Matrix{Precorrelate{T}}}
+    imagedim::Vector{Channel{Matrix{T}}}
+    builddim_real::Channel{Matrix{T}}
+    builddim_real_4d::Channel{Array{T, 4}}
+    builddim_cplx::Channel{Matrix{Complex{T}}}
+    builddim_cplx_4d::Channel{Array{Complex{T}, 4}}
+    layerdim_real::Channel{Matrix{T}}
+    layerdim_cplx::Channel{Matrix{Complex{T}}}
+    ft::Channel{Function}
+    ift::Channel{Function}
+    convolve::Channel{ConvolutionPlan{T}}
+    correlate::Channel{CorrelationPlan{T}}
+    autocorr::Channel{Function}
+    function BufferChannels(
+            object, 
+            atmosphere, 
             observations,
-            object,
-            patches,
+            patches, 
+            build_dim,
             wavefront_parameter,
             frozen_flow,
             smoothing;
-            λtotal=atmosphere.λ,
-            build_dim=size(object.object, 1),
-            ndatasets=length(observations),
-            FTYPE=gettype(atmosphere)
+            FTYPE=Float64
         )
-
-        nλtotal = length(λtotal)
         nthreads = Threads.nthreads()
+        ndatasets = length(observations)
 
         channel_object_preconv = Channel{Matrix{Preconvolve{FTYPE}}}(nthreads)
         channel_object_precorr = Channel{Matrix{Precorrelate{FTYPE}}}(nthreads)
@@ -166,23 +157,60 @@ mutable struct Helpers{T<:AbstractFloat}
             put!(channel_builddim_real, zeros(FTYPE, build_dim, build_dim))
         end
 
-        ndatasets = length(observations)
-        mask_acf = Vector{Matrix{FTYPE}}(undef, ndatasets)
-        extractor = Vector{Array{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}, 4}}(undef, ndatasets)
-        extractor_adj = Vector{Array{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}, 4}}(undef, ndatasets)
-        refraction = Matrix{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}}(undef, ndatasets, nλtotal)
-        refraction_adj = Matrix{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}}(undef, ndatasets, nλtotal)
         channel_imagedim = Vector{Channel{Matrix{FTYPE}}}(undef, ndatasets)
         for dd=1:ndatasets
             obs = observations[dd]
             channel_imagedim[dd] = Channel{Matrix{FTYPE}}(3*nthreads)
             foreach(1:3*nthreads) do ~
                 put!(channel_imagedim[dd], zeros(FTYPE, obs.dim, obs.dim))
-            end
+            end 
+        end
 
+        return new{FTYPE}(channel_object_gradient_buffer, channel_wavefront_gradient_buffer, channel_smooth, channel_unsmooth, channel_object_preconv, channel_object_precorr, channel_imagedim, channel_builddim_real, channel_builddim_real_4d, channel_builddim_cplx, channel_builddim_cplx_4d, channel_layerdim_real, channel_layerdim_cplx, channel_ft, channel_ift, channel_convolve, channel_correlate, channel_autocorr)
+    end
+end
+
+mutable struct Helpers{T<:AbstractFloat}
+    extractor::Vector{Array{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}, 4}}
+    extractor_adj::Vector{Array{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}, 4}}
+    refraction::Matrix{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}}
+    refraction_adj::Matrix{TwoDimensionalTransformInterpolator{T, LinearSpline{T, Flat}, LinearSpline{T, Flat}}}
+    mask_acf::Vector{Matrix{T}}
+    smoothing_kernel::Matrix{T}
+    channels::BufferChannels{T}
+    function Helpers(
+            atmosphere,
+            observations,
+            object,
+            patches,
+            wavefront_parameter,
+            frozen_flow,
+            smoothing;
+            λtotal=atmosphere.λ,
+            build_dim=size(object.object, 1),
+            FTYPE=gettype(atmosphere)
+        )
+
+        if smoothing == true
+            smoothing_kernel = Matrix{FTYPE}(undef, build_dim, build_dim)
+        else
+            smoothing_kernel = FTYPE[;;]
+        end
+
+        nλtotal = length(λtotal)
+        ndatasets=length(observations)
+        channels = BufferChannels(object, atmosphere, observations, patches, build_dim, wavefront_parameter, frozen_flow, smoothing, FTYPE=FTYPE)
+        ndatasets = length(observations)
+        mask_acf = Vector{Matrix{FTYPE}}(undef, ndatasets)
+        extractor = Vector{Array{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}, 4}}(undef, ndatasets)
+        extractor_adj = Vector{Array{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}, 4}}(undef, ndatasets)
+        refraction = Matrix{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}}(undef, ndatasets, nλtotal)
+        refraction_adj = Matrix{TwoDimensionalTransformInterpolator{FTYPE, LinearSpline{FTYPE, Flat}, LinearSpline{FTYPE, Flat}}}(undef, ndatasets, nλtotal)
+        for dd=1:ndatasets
+            obs = observations[dd]
             mask_acf[dd] = ones(FTYPE, obs.dim, obs.dim)
             mask_acf[dd][obs.dim÷2+1, obs.dim÷2+1] = 0
-            scaleby_wavelength = [obs.detector.λ_nyquist / λtotal[w] for w=1:nλtotal]
+            scaleby_wavelength = [atmosphere.λ_nyquist / λtotal[w] for w=1:nλtotal]
             scaleby_height = layer_scale_factors(atmosphere.heights, object.range)
             refraction[dd, :] .= create_refraction_operator.(λtotal, atmosphere.λ_ref, obs.ζ, obs.detector.pixscale, build_dim, FTYPE=FTYPE)
             refraction_adj[dd, :] .= create_refraction_adjoint.(λtotal, atmosphere.λ_ref, obs.ζ, obs.detector.pixscale, build_dim, FTYPE=FTYPE)
@@ -190,7 +218,7 @@ mutable struct Helpers{T<:AbstractFloat}
             extractor_adj[dd] = create_patch_extractors_adjoint(patches, atmosphere, obs, object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
         end
 
-        return new{FTYPE}(extractor, extractor_adj, refraction, refraction_adj, mask_acf, smoothing_kernel, channel_object_gradient_buffer, channel_wavefront_gradient_buffer, channel_smooth, channel_unsmooth, channel_object_preconv, channel_object_precorr, channel_imagedim, channel_builddim_real, channel_builddim_real_4d, channel_builddim_cplx, channel_builddim_cplx_4d, channel_layerdim_real, channel_layerdim_cplx, channel_ft, channel_ift, channel_convolve, channel_correlate, channel_autocorr)
+        return new{FTYPE}(extractor, extractor_adj, refraction, refraction_adj, mask_acf, smoothing_kernel, channels)
     end
 end
 
@@ -297,7 +325,8 @@ mutable struct Reconstruction{T<:AbstractFloat}
             wavefront_parameter,
             frozen_flow,
             smoothing;
-            λtotal=λtotal,
+            build_dim=build_dim,
+            FTYPE=FTYPE
         );
 
         if isnothing(regularizers)
@@ -482,8 +511,8 @@ end
 @views function preconvolve_object(reconstruction, patches, object)
     helpers = reconstruction.helpers
     foreach(1:Threads.nthreads()) do ~
-        object_preconv = take!(helpers.channel_object_preconv)
-        object_precorr = take!(helpers.channel_object_precorr)
+        object_preconv = take!(helpers.channels.object_preconv)
+        object_precorr = take!(helpers.channels.object_precorr)
         for w=1:object.nλ
             for np=1:patches.npatches
                 object_patch = patches.w[:, :, np] .* object.object[:, :, w]
@@ -491,15 +520,15 @@ end
                 object_precorr[w, np] = Precorrelate(object_patch)
             end
         end
-        put!(helpers.channel_object_preconv, object_preconv)
-        put!(helpers.channel_object_precorr, object_precorr)
+        put!(helpers.channels.object_preconv, object_preconv)
+        put!(helpers.channels.object_precorr, object_precorr)
     end
 end
 
 @views function preconvolve_smoothing(reconstruction)
     helpers = reconstruction.helpers
-    channel_smooth = helpers.channel_smooth
-    channel_unsmooth = helpers.channel_unsmooth
+    channel_smooth = helpers.channels.smooth
+    channel_unsmooth = helpers.channels.unsmooth
     foreach(1:Threads.nthreads()) do ~
         take!(channel_smooth)
         take!(channel_unsmooth)

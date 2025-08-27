@@ -46,7 +46,7 @@ saturation = 30000.0  # e⁻
 gain = saturation / (typemax(DTYPE))  # e⁻ / ADU
 qefile = "../data/qe/prime-95b_qe.dat"
 ~, qe = readqe(qefile, λ=λ)
-rn = 2.0
+rn = 1.0
 exptime = 5e-3
 ζ = 0.0
 ########## Create Optical System ##########
@@ -115,7 +115,7 @@ observations_wfs = Observations(
 nsubaps = observations_wfs.masks.nsubaps
 observations_wfs.masks.scale_psfs = observations_full.masks.scale_psfs
 observations = [observations_wfs, observations_full]
-background = mean(fit_background(observations_full))
+background = 0 # mean(fit_background(observations_full))
 ###########################################
 
 
@@ -126,11 +126,12 @@ object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3,
 object_arr = repeat(object_arr, 1, 1, nλ)
 object_arr ./= sum(object_arr)
 object_arr .*= (mean(sum(observations_full.images, dims=(1, 2, 3))) - background)
-# object_arr = 0 .* readfits("$(folder)/object_truth_spectral.fits")
+# object_arr = readfits("$(folder)/object_truth_spectral.fits")
 ~, spectrum = solar_spectrum(λ=λ)
 object = Object(
     object_arr,
     λ=λ,
+    nλint=nλint,
     object_range=object_range, 
     fov=fov,
     dim=observations_full.dim,
@@ -193,7 +194,7 @@ reconstruction = Reconstruction(
     frozen_flow=true,
     minimization_scheme=:mle,
     noise_model=:gaussian,
-    maxeval=Dict("wf"=>10000, "object"=>10000),
+    maxeval=Dict("wf"=>100, "object"=>100),
     smoothing=true,
     # fwhm_schedule=ConstantSchedule(0.5),
     build_dim=image_dim,

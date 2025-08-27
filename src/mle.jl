@@ -28,42 +28,31 @@ end
         ## Aliases for dataset-dependent parameters
         obs = observations[dd]  # Dataset from the full set
         detector = obs.detector
-        optics = obs.optics  # Makes it easier to type
-        mask = obs.masks  # Masks for that dataset
-        scale_psfs = mask.scale_psfs  # Scaler to multiply the PSFs by to ensure unit volume
         refraction = helpers.refraction[dd, :]  # Refraction operator for the dataset
-        ϕ_static = obs.phase_static  # Static phase for the dataset
         ##
         zeros!(obs.model_images)  # Fill the model images with zeros to ensure a fresh start
         reconstruction.ϵ += tmapreduce(+, collect(Iterators.product(1:obs.nepochs, 1:obs.nsubaps))) do (t, n)  # Loop through all timesteps
-            extractor = helpers.extractor[dd][t, :, :, :]  # Interpolation operators for punch out
+            extractors = helpers.extractor[dd][t, :, :, :]  # Interpolation operators for punch out
             ϵ_local = zero(FTYPE)
-            iffts, conv_plan, corr_plan, A, ϕ_slices, ϕ_composite, smoothing, P, p, psf, psf_temp, object_patch, ω, r, image_big, image_small, container_builddim_real, gradient_buffer = take_object_buffers(helpers, dd)
-            ##
-            ones!(A)
-            zeros!(psf)
-            ## Aliases for time-dependent parameters
-            ## Aliases for subap-dependent parameters
+            buffers = take_object_buffers(helpers, dd)
             subap_image = obs.model_images[:, :, n, t]  # Model image for each subap at each time
-            subap_mask = mask.masks[:, :, n, :]  # Mask for each subap at all wavelengths
             ##
-            create_radiant_energy_pre_detector!(subap_image, image_small, image_big, psf, psf_temp, scale_psfs, x, patches.w, object_patch, obs.aperture_area, detector.exptime, subap_mask, A, P, p, refraction, iffts, conv_plan, object.background / obs.dim^2 / obs.nsubaps, atmosphere.transmission, optics.response, ϕ_composite, ϕ_static, ϕ_slices, atmosphere.phase, smoothing, atmosphere.nlayers, extractor, atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, reconstruction.nλ, reconstruction.nλint, reconstruction.Δλ)
+            create_radiant_energy_pre_detector!(subap_image, obs, object, atmosphere, patches, refraction, extractors, buffers, (; n, t))
             subap_image ./= detector.gain
-            ω .= reconstruction.weight_function(obs.entropy[n, t], subap_image, detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
-            ϵ_local += loglikelihood_gaussian!(r, obs.images[:, :, n, t], subap_image, ω)  # Calculate the gaussian likelihood for the calculated model image and data frame
-            reconstruction.gradient_object(gradient_buffer, r, ω, image_big, psf, optics.response, atmosphere.transmission, detector.gain, detector.exptime, obs.aperture_area, obs.entropy[n, t], patches.w, patches.npatches, reconstruction.Δλ, reconstruction.nλ, corr_plan, container_builddim_real)
-
-            put_object_buffers(helpers, dd, iffts, conv_plan, corr_plan, A, ϕ_slices, ϕ_composite, smoothing, P, p, psf, psf_temp, object_patch, ω, r, image_big, image_small, container_builddim_real, gradient_buffer)
+            buffers.ω .= reconstruction.weight_function(obs.entropy[n, t], subap_image, detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
+            ϵ_local += loglikelihood_gaussian!(buffers.r, obs.images[:, :, n, t], subap_image, buffers.ω)  # Calculate the gaussian likelihood for the calculated model image and data frame
+            reconstruction.gradient_object(reconstruction, obs, atmosphere, patches, buffers, n, t)
+            put_object_buffers(helpers, dd, buffers)
 
             return ϵ_local
         end
     end
 
     for ~=1:Threads.nthreads()
-        buffer = take!(helpers.channel_object_gradient_buffer)
+        buffer = take!(helpers.channels.object_gradient_buffer)
         g .+= buffer
         zeros!(buffer)
-        put!(helpers.channel_object_gradient_buffer, buffer)
+        put!(helpers.channels.object_gradient_buffer, buffer)
     end
 
     for w=1:reconstruction.nλ
@@ -74,213 +63,27 @@ end
     return reconstruction.ϵ
 end
 
-function take_object_buffers(helpers, dd)
-    iffts = take!(helpers.channel_ift)  # Pre-allocated FFTs
-    conv_plan = take!(helpers.channel_convolve)  # Pre-allocated convolutions
-    corr_plan = take!(helpers.channel_correlate)  # Pre-allocated correlations
-    A = take!(helpers.channel_builddim_real)  # Buffer for amplitude
-    ϕ_slices = take!(helpers.channel_builddim_real)  # Buffer for per-layer phase
-    ϕ_composite = take!(helpers.channel_builddim_real)  # Buffer for composite phase
-    smoothing = take!(helpers.channel_smooth)  # Function to smooth the composite phase
-    P = take!(helpers.channel_builddim_cplx_4d)  # Pupil function buffers 
-    p = take!(helpers.channel_builddim_cplx_4d)  # IFFT of pupil function buffers
-    psf = take!(helpers.channel_builddim_real_4d)  # PSF buffer
-    psf_temp = take!(helpers.channel_builddim_real)  # Temporary array needed to compute PSF
-    object_patch = take!(helpers.channel_builddim_real)  # Object-times-patch weight buffer
-    ω = take!(helpers.channel_imagedim[dd])
-    r = take!(helpers.channel_imagedim[dd])
-    image_big = take!(helpers.channel_builddim_real)  # Buffer to hold the full-size spectral image
-    image_small = take!(helpers.channel_imagedim[dd])  # Buffer to hold the downsampled spectral image
-    container_builddim_real = take!(helpers.channel_builddim_real)
-    gradient_buffer = take!(helpers.channel_object_gradient_buffer)
-    return iffts, conv_plan, corr_plan, A, ϕ_slices, ϕ_composite, smoothing, P, p, psf, psf_temp, object_patch, ω, r, image_big, image_small, container_builddim_real, gradient_buffer
+@views function gradient_object_mle_gaussiannoise!(reconstruction, obs, atmosphere, patches, buffers, n, t)
+    buffers.r .*= buffers.ω
+    gradient_object_mle!(reconstruction, obs, atmosphere, patches, buffers)
 end
 
-function put_object_buffers(helpers, dd, iffts, conv_plan, corr_plan, A, ϕ_slices, ϕ_composite, smoothing, P, p, psf, psf_temp, object_patch, ω, r, image_big, image_small, container_builddim_real, gradient_buffer)
-    put!(helpers.channel_ift, iffts)  # Pre-allocated FFTs
-    put!(helpers.channel_convolve, conv_plan)  # Pre-allocated convolutions
-    put!(helpers.channel_correlate, corr_plan)  # Pre-allocated correlations
-    put!(helpers.channel_builddim_real, A)  # Buffer for amplitude
-    put!(helpers.channel_builddim_real, ϕ_slices)  # Buffer for per-layer phase
-    put!(helpers.channel_builddim_real, ϕ_composite)  # Buffer for composite phase
-    put!(helpers.channel_smooth, smoothing)  # Function to smooth the composite phase
-    put!(helpers.channel_builddim_cplx_4d, P)  # Pupil function buffers 
-    put!(helpers.channel_builddim_cplx_4d, p)  # IFFT of pupil function buffers
-    put!(helpers.channel_builddim_real_4d, psf)  # PSF buffer
-    put!(helpers.channel_builddim_real, psf_temp)  # Temporary array needed to compute PSF
-    put!(helpers.channel_builddim_real, object_patch)  # Object-times-patch weight buffer
-    put!(helpers.channel_imagedim[dd], ω)
-    put!(helpers.channel_imagedim[dd], r)
-    put!(helpers.channel_builddim_real, image_big)  # Buffer to hold the full-size spectral image
-    put!(helpers.channel_imagedim[dd], image_small)  # Buffer to hold the downsampled spectral image
-    put!(helpers.channel_builddim_real, container_builddim_real)
-    put!(helpers.channel_object_gradient_buffer, gradient_buffer)
+@views function gradient_object_mle_mixednoise!(reconstruction, obs, atmosphere, patches, buffers, n, t)
+    buffers.r .= 2 .* buffers.ω .* buffers.r .- (buffers.ω .* buffers.r).^2 .* obs.entropy[n, t]
+    gradient_object_mle!(reconstruction, obs, atmosphere, patches, buffers)
 end
 
-@views function gradient_object_mle_gaussiannoise!(g, r, ω, image_big, psfs, optics_response, atmospheric_transmission, gain, exptime, area, entropy, patch_weights, npatches, Δλ, nλ, corr_plan, container_builddim_real)
-    r .*= ω
-    gradient_object_mle!(g, r, ω, image_big, psfs, optics_response, atmospheric_transmission, gain, exptime, area, entropy, patch_weights, npatches, Δλ, nλ, corr_plan, container_builddim_real)
-end
-
-@views function gradient_object_mle_mixednoise!(g, r, ω, image_big, psfs, optics_response, atmospheric_transmission, gain, exptime, area, entropy, patch_weights, npatches, Δλ, nλ, corr_plan, container_builddim_real)
-    r .= 2 .* ω .* r .- (ω .* r).^2 .* entropy
-    gradient_object_mle!(g, r, ω, image_big, psfs, optics_response, atmospheric_transmission, gain, exptime, area, entropy, patch_weights, npatches, Δλ, nλ, corr_plan, container_builddim_real)
-end
-
-@views function gradient_object_mle!(g, r, ω, image_big, psfs, optics_response, atmospheric_transmission, gain, exptime, area, entropy, patch_weights, npatches, Δλ, nλ, corr_plan, container_builddim_real)
-    block_replicate!(image_big, r)
-    for np=1:npatches
-        for w₁=1:nλ
-            correlate!(container_builddim_real, corr_plan, image_big, psfs[:, :, np, w₁])
-            g[:, :, w₁] .+= (Δλ*optics_response[w₁]*atmospheric_transmission[w₁]*exptime*area/gain) .* patch_weights[:, :, np] .* container_builddim_real
+@views function gradient_object_mle!(reconstruction, obs, atmosphere, patches, buffers)
+    block_replicate!(buffers.image_big, buffers.r)
+    for np=1:patches.npatches
+        for w₁=1:reconstruction.nλ
+            correlate!(buffers.container_builddim_real, buffers.corr_plan, buffers.image_big, buffers.psf[:, :, np, w₁])
+            buffers.gradient_buffer[:, :, w₁] .+= (reconstruction.Δλ*obs.optics.response[w₁]*atmosphere.transmission[w₁]*obs.detector.exptime*obs.aperture_area/obs.detector.gain) .* patches.w[:, :, np] .* buffers.container_builddim_real
         end
     end
 end
 
-
-# @views function fg_opd_mle(x, g, observations, atmosphere, patches, reconstruction, object)
-#     FTYPE = gettype(reconstruction)  # Alias for the datatype
-#     ndatasets = length(observations)  # Number of datasets to be processed
-#     helpers = reconstruction.helpers  # Alias for helpers, makes it quicker to type
-#     regularizers = reconstruction.regularizers  # Alias for regularizers, makes it quicker to type
-#     fill!(g, zero(FTYPE))  # Fill gradient with zeros, OptimPack initializes it with undef's, which can give crazy NaN values
-#     fill!(helpers.g_threads_wf, zero(FTYPE))  # Fill phase gradient buffer with zeros
-#     fill!(helpers.ϵ_threads, zero(FTYPE))  # Fill criterion vector with zeros
-#     if reconstruction.plot == true  # If plotting is enabled, object and phase plots will be updated here with the current proposed values
-#         update_phase_figure(x, atmosphere, reconstruction)
-#     end
-    
-#     for dd=1:ndatasets  # Loop through data channels
-#         ## Aliases for dataset-dependent parameters
-#         observation = observations[dd]  # Dataset from the full set
-#         detector = observation.detector
-#         optics = observation.optics  # Makes it easier to type
-#         mask = observations[dd].masks  # Masks for that dataset
-#         scale_psfs = mask.scale_psfs  # Scaler to multiply the PSFs by to ensure unit volume
-#         refraction = helpers.refraction[dd, :]  # Refraction operator for the dataset
-#         refraction_adj = helpers.refraction_adj[dd, :]  # Inverse refraction operator for the dataset
-#         r = helpers.r[dd]  # Buffer to hold residuals
-#         ω = helpers.ω[dd]  # Buffer to hold statistical weights
-#         ϕ_static = observation.phase_static  # Static phase for the dataset
-#         ## 
-#         fill!(observation.model_images, zero(FTYPE))  # Fill the model images with zeros to ensure a fresh start
-#         Threads.@threads :static for t=1:observation.nepochs  # Loop through all timesteps
-#             tid = Threads.threadid()  # Indexing is done by the thread id, which remains constant under the :static thread scheduler
-#             ## Aliases for time-dependent parameters
-#             iffts = helpers.ift[tid]  # Pre-allocated FFTs
-#             convs = helpers.convolve[tid]  # Pre-allocated convolutions
-#             extractor = helpers.extractor[dd][t, :, :, :]  # Interpolation operators for punch out
-#             extractor_adj = helpers.extractor_adj[dd][t, :, :, :]  # Interpolation operators for unpunch out
-#             A = helpers.A[:, :, tid]  # Buffer for amplitude
-#             ϕ_slices = helpers.ϕ_slices[:, :, tid]  # Buffer for per-layer phase
-#             ϕ_composite = helpers.ϕ_composite[:, :, tid]  # Buffer for composite phase
-#             smoothing = helpers.smooth[tid]  # Function to smooth the composite phase
-#             unsmoothing = helpers.unsmooth[tid]
-#             P = helpers.P[:, :, :, :, tid]  # Pupil function buffers 
-#             p = helpers.p[:, :, :, :, tid]  # IFFT of pupil function buffers
-#             psfs = helpers.psf[:, :, :, :, tid]  # PSF buffer
-#             psf_temp = helpers.psf_temp[:, :, tid]  # Temporary array needed to compute PSF
-#             object_patch = helpers.object_patch[:, :, tid]  # Object-times-patch weight buffer
-#             image_temp_big = helpers.image_temp_big[:, :, tid]  # Buffer to hold the full-size spectral image
-#             image_temp_small = helpers.image_temp_small[dd][:, :, tid]  # Buffer to hold the downsampled spectral image
-#             ##
-#             for n=1:observation.nsubaps  # Loop through all subaps
-#                 ## Aliases for subap-dependent parameters
-#                 subap_image = observation.model_images[:, :, n, t]  # Model image for each subap at each time
-#                 subap_mask = mask.masks[:, :, n, :]  # Mask for each subap at all wavelengths
-#                 ##
-#                 create_image!(subap_image, image_temp_small, image_temp_big, psfs, psf_temp, scale_psfs, object.object, patches.w, object_patch, subap_mask, A, P, p, refraction, iffts, convs, atmosphere.transmission, optics.response, ϕ_composite, ϕ_static, ϕ_slices, x, smoothing, atmosphere.nlayers, extractor, atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, reconstruction.nλ, reconstruction.nλint, reconstruction.Δλ)
-#                 observation.model_images[:, :, n, t] .+= object.background_flux ./ observation.dim^2  # Add the background, which is specified per image, so scale by the number of pixels first
-#                 ω[:, :, tid] .= reconstruction.weight_function(observation.entropy[n, t], observation.model_images[:, :, n, t], detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
-#                 helpers.ϵ_threads[tid] += loglikelihood_gaussian(r[:, :, tid], observation.images[:, :, n, t], observation.model_images[:, :, n, t], ω[:, :, tid])  # Calculate the gaussian likelihood for the calculated model image and data frame
-#                 reconstruction.gradient_wf(helpers.g_threads_wf[:, :, :, :, tid], r[:, :, tid], ω[:, :, tid], P, p, helpers.c[:, :, tid], helpers.d[:, :, tid], helpers.d2[:, :, tid], reconstruction.λtotal, reconstruction.Δλtotal, reconstruction.nλ, reconstruction.nλint, optics.response, atmosphere.transmission, atmosphere.nlayers, helpers.o_corr[:, :, tid], observation.entropy[n, t], patches.npatches, unsmoothing, refraction_adj, extractor_adj, iffts, helpers.containers_builddim_real[:, :, tid], helpers.containers_sdim_real[:, :, tid])
-#             end
-#         end
-#     end
-
-#     ϵ = sum(helpers.ϵ_threads)
-#     for tid=1:Threads.nthreads()  # Add together the gradients computed from each thread
-#         g .+= helpers.g_threads_wf[:, :, :, :, tid]
-#     end
-
-#     ## Apply regularization
-#     for l=1:atmosphere.nlayers
-#         for w₁=1:reconstruction.nλ
-#             for w₂=1:reconstruction.nλint 
-#                 w = (w₁-1)*reconstruction.nλint + w₂
-#                 ϵ += regularizers.wf_reg(x[:, :, l, w], g[:, :, l, w], regularizers.βwf)
-#             end
-#         end
-#     end
-
-#     reconstruction.ϵ = ϵ
-#     return ϵ
-# end
-
-# @views function gradient_opd_ffm_mle_gaussiannoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, nlayers, o_corr, entropy, npatches, k_corr, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_sdim_real)
-#     FTYPE = eltype(r)
-#     r .*= ω
-#     block_replicate!(c, r)
-#     conj!(p)
-#     for np=1:npatches
-#         for w₁=1:nλ
-#             d2 .= o_corr[w₁, np](c)  # <--
-#             for w₂=1:nλint
-#                 w = (w₁-1)*nλint + w₂
-#                 container_builddim_real .= d2
-#                 mul!(d2, refraction_adj[w], container_builddim_real)
-
-#                 p[:, :, np, w] .*= d2
-#                 ifft!(d, p[:, :, np, w])
-#                 d .*= P[:, :, np, w]
-#                 d2 .= imag.(d)
-#                 d2 .*= FTYPE(-8pi) * Δλ/λ[w] * response[w] * transmission[w]
-#                 if smoothing == true
-#                     d2 .= k_corr(d2)
-#                 end
-
-#                 for l=1:nlayers
-#                     mul!(container_sdim_real, extractor_adj[np, l, w], d2)
-#                     g[:, :, l] .+= container_sdim_real
-#                 end
-#             end
-#         end
-#     end
-# end
-
-# @views function gradient_opd_ffm_mle_mixednoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, nlayers, o_corr, entropy, npatches, k_corr, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_sdim_real)
-#     FTYPE = eltype(r)
-#     r .= 2 .* ω .* r .- (ω .* r).^2 .* entropy
-#     block_replicate!(c, r)
-#     conj!(p)
-#     for np=1:npatches
-#         for w₁=1:nλ
-#             d2 .= o_corr[w₁, np](c)  # <--
-#             for w₂=1:nλint
-#                 w = (w₁-1)*nλint + w₂
-#                 container_builddim_real .= d2
-#                 mul!(d2, refraction_adj[w], container_builddim_real)
-
-#                 p[:, :, np, w] .*= d2
-#                 ifft!(d, p[:, :, np, w])
-#                 d .*= P[:, :, np, w]
-#                 d2 .= imag.(d)
-#                 d2 .*= FTYPE(-4pi) * Δλ/λ[w] * response[w] * transmission[w]
-
-#                 if smoothing == true
-#                     d2 .= k_corr(d2)
-#                 end
-
-#                 for l=1:nlayers
-#                     mul!(container_sdim_real, extractor_adj[np, l, w], d2)
-#                     g[:, :, l] .+= container_sdim_real
-#                 end
-#             end
-#         end
-#     end
-# end
-
-@views function fg_phase_ffm_mle(x, g, observations, atmosphere, patches, reconstruction, object)
+@views function fg_opd_ffm_mle(x, g, observations, atmosphere, patches, reconstruction, object)
     FTYPE = gettype(reconstruction)  # Alias for the datatype
     ndatasets = length(observations)  # Number of datasets to be processed
     helpers = reconstruction.helpers  # Alias for helpers, makes it quicker to type
@@ -290,47 +93,42 @@ end
     if reconstruction.plot == true  # If plotting is enabled, object and phase plots will be updated here with the current proposed values
         update_phase_figure(x, atmosphere, reconstruction)
     end
+
+    for w=1:reconstruction.nλ
+        atmosphere.phase[:, :, :, w] .= x .* (2pi / reconstruction.λ[w])
+    end
     
     for dd=1:ndatasets  # Loop through data channels
         ## Aliases for dataset-dependent parameters
         obs = observations[dd]  # Dataset from the full set
         detector = obs.detector
-        optics = obs.optics  # Makes it easier to type
-        mask = obs.masks  # Masks for that dataset
-        scale_psfs = mask.scale_psfs  # Scaler to multiply the PSFs by to ensure unit volume
         refraction = helpers.refraction[dd, :]  # Refraction operator for the dataset
         refraction_adj = helpers.refraction_adj[dd, :]  # Inverse refraction operator for the dataset
-        ϕ_static = obs.phase_static  # Static phase for the dataset
         ## 
         zeros!(obs.model_images)  # Fill the model images with zeros to ensure a fresh start
         reconstruction.ϵ += tmapreduce(+, collect(Iterators.product(1:obs.nepochs, 1:obs.nsubaps))) do (t, n)  # Loop through all timesteps
-            extractor = helpers.extractor[dd][t, :, :, :]  # Interpolation operators for punch out
-            extractor_adj = helpers.extractor_adj[dd][t, :, :, :]  # Interpolation operators for punch out
+            extractors = helpers.extractor[dd][t, :, :, :]  # Interpolation operators for punch out
+            extractors_adj = helpers.extractor_adj[dd][t, :, :, :]  # Interpolation operators for punch out
             ϵ_local = zero(FTYPE)
             ## Aliases for time-dependent parameters
-            iffts, conv_plan, corr_plan, A, ϕ_slices, ϕ_composite, smooth, unsmooth, P, p, psf, psf_temp, object_patch, object_precorr, ω, r, image_big, image_small, c, d, d2, container_builddim_real, container_layerdim_real, gradient_buffer = take_phase_buffers(helpers, dd)
-            ones!(A)
-            zeros!(psf)
-
+            buffers = take_wf_buffers(helpers, dd)
             subap_image = obs.model_images[:, :, n, t]  # Model image for each subap at each time
-            subap_mask = mask.masks[:, :, n, :]  # Mask for each subap at all wavelengths
-            create_radiant_energy_pre_detector!(subap_image, image_small, image_big, psf, psf_temp, scale_psfs, object.object, patches.w, object_patch, obs.aperture_area, detector.exptime, subap_mask, A, P, p, refraction, iffts, conv_plan, object.background / obs.dim^2 / obs.nsubaps, atmosphere.transmission, optics.response, ϕ_composite, ϕ_static, ϕ_slices, x, smooth, atmosphere.nlayers, extractor, atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, reconstruction.nλ, reconstruction.nλint, reconstruction.Δλ)
+            create_radiant_energy_pre_detector!(subap_image, observations, object, atmosphere, patches, refraction, extractors, buffers, (; n, t))
             subap_image ./= detector.gain
-            ω .= reconstruction.weight_function(obs.entropy[n, t], subap_image, detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
-            ϵ_local += loglikelihood_gaussian!(r, obs.images[:, :, n, t], subap_image, ω)  # Calculate the gaussian likelihood for the calculated model image and data frame
-            reconstruction.gradient_wf(gradient_buffer, r, ω, P, p, c, d, d2, reconstruction.λtotal, reconstruction.Δλtotal, reconstruction.nλ, reconstruction.nλint, optics.response, atmosphere.transmission, detector.gain, detector.exptime, obs.aperture_area, atmosphere.nlayers, object_precorr, obs.entropy[n, t], patches.npatches, unsmooth, refraction_adj, extractor_adj, iffts, container_builddim_real, container_layerdim_real)
-    
-            put_phase_buffers(helpers, dd, iffts, conv_plan, corr_plan, A, ϕ_slices, ϕ_composite, smooth, unsmooth, P, p, psf, psf_temp, object_patch, object_precorr, ω, r, image_big, image_small, c, d, d2, container_builddim_real, container_layerdim_real, gradient_buffer)
+            buffers.ω .= reconstruction.weight_function(obs.entropy[n, t], subap_image, detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
+            ϵ_local += loglikelihood_gaussian!(buffers.r, obs.images[:, :, n, t], subap_image, buffers.ω)  # Calculate the gaussian likelihood for the calculated model image and data frame
+            reconstruction.gradient_wf(reconstruction, obs, atmosphere, patches, refraction_adj, extractors_adj, buffers, n, t)
+            put_wf_buffers(helpers, dd, buffers)
 
             return ϵ_local
         end
     end
 
     for ~=1:Threads.nthreads()
-        buffer = take!(helpers.channel_wavefront_gradient_buffer)
+        buffer = take!(helpers.channels.wavefront_gradient_buffer)
         g .+= buffer
         zeros!(buffer)
-        put!(helpers.channel_wavefront_gradient_buffer, buffer)
+        put!(helpers.channels.wavefront_gradient_buffer, buffer)
     end
 
     ## Apply regularization
@@ -346,179 +144,355 @@ end
     return reconstruction.ϵ
 end
 
-function take_phase_buffers(helpers, dd)
-    iffts = take!(helpers.channel_ift)  # Pre-allocated FFTs
-    conv_plan = take!(helpers.channel_convolve)  # Pre-allocated convolutions
-    corr_plan = take!(helpers.channel_correlate)  # Pre-allocated correlations
-    A = take!(helpers.channel_builddim_real)  # Buffer for amplitude
-    ϕ_slices = take!(helpers.channel_builddim_real)  # Buffer for per-layer phase
-    ϕ_composite = take!(helpers.channel_builddim_real)  # Buffer for composite phase
-    smooth = take!(helpers.channel_smooth)  # Function to smooth the composite phase
-    unsmooth = take!(helpers.channel_unsmooth)  # Function to smooth the composite phase
-    P = take!(helpers.channel_builddim_cplx_4d)  # Pupil function buffers 
-    p = take!(helpers.channel_builddim_cplx_4d)  # IFFT of pupil function buffers
-    psf = take!(helpers.channel_builddim_real_4d)  # PSF buffer
-    psf_temp = take!(helpers.channel_builddim_real)  # Temporary array needed to compute PSF
-    object_patch = take!(helpers.channel_builddim_real)  # Object-times-patch weight buffer
-    object_precorr = take!(helpers.channel_object_precorr)
-    ω = take!(helpers.channel_imagedim[dd])
-    r = take!(helpers.channel_imagedim[dd])
-    image_big = take!(helpers.channel_builddim_real)  # Buffer to hold the full-size spectral image
-    image_small = take!(helpers.channel_imagedim[dd])  # Buffer to hold the downsampled spectral image
-    c = take!(helpers.channel_builddim_real)
-    d = take!(helpers.channel_builddim_cplx)
-    d2 = take!(helpers.channel_builddim_real)
-    container_builddim_real = take!(helpers.channel_builddim_real)
-    container_layerdim_real = take!(helpers.channel_layerdim_real)
-    gradient_buffer = take!(helpers.channel_wavefront_gradient_buffer)
-    return iffts, conv_plan, corr_plan, A, ϕ_slices, ϕ_composite, smooth, unsmooth, P, p, psf, psf_temp, object_patch, object_precorr, ω, r, image_big, image_small, c, d, d2, container_builddim_real, container_layerdim_real, gradient_buffer
+@views function gradient_opd_ffm_mle_gaussiannoise!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers, n, t)
+    buffers.r .*= 2 .* buffers.ω
+    gradient_opd_ffm_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers)
 end
 
-function put_phase_buffers(helpers, dd, iffts, conv_plan, corr_plan, A, ϕ_slices, ϕ_composite, smooth, unsmooth, P, p, psf, psf_temp, object_patch, object_precorr, ω, r, image_big, image_small, c, d, d2, container_builddim_real, container_layerdim_real, gradient_buffer)
-    put!(helpers.channel_ift, iffts)  # Pre-allocated FFTs
-    put!(helpers.channel_convolve, conv_plan)  # Pre-allocated convolutions
-    put!(helpers.channel_correlate, corr_plan)  # Pre-allocated correlations
-    put!(helpers.channel_builddim_real, A)  # Buffer for amplitude
-    put!(helpers.channel_builddim_real, ϕ_slices)  # Buffer for per-layer phase
-    put!(helpers.channel_builddim_real, ϕ_composite)  # Buffer for composite phase
-    put!(helpers.channel_smooth, smooth)  # Function to smooth the composite phase
-    put!(helpers.channel_unsmooth, unsmooth)  # Function to smooth the composite phase
-    put!(helpers.channel_builddim_cplx_4d, P)  # Pupil function buffers 
-    put!(helpers.channel_builddim_cplx_4d, p)  # IFFT of pupil function buffers
-    put!(helpers.channel_builddim_real_4d, psf)  # PSF buffer
-    put!(helpers.channel_builddim_real, psf_temp)  # Temporary array needed to compute PSF
-    put!(helpers.channel_builddim_real, object_patch)  # Object-times-patch weight buffer
-    put!(helpers.channel_object_precorr, object_precorr)
-    put!(helpers.channel_imagedim[dd], ω)
-    put!(helpers.channel_imagedim[dd], r)
-    put!(helpers.channel_builddim_real, image_big)  # Buffer to hold the full-size spectral image
-    put!(helpers.channel_imagedim[dd], image_small)  # Buffer to hold the downsampled spectral image
-    put!(helpers.channel_builddim_real, c)
-    put!(helpers.channel_builddim_cplx, d)
-    put!(helpers.channel_builddim_real, d2)
-    put!(helpers.channel_layerdim_real, container_layerdim_real)
-    put!(helpers.channel_builddim_real, container_builddim_real)
-    put!(helpers.channel_wavefront_gradient_buffer, gradient_buffer)
+@views function gradient_opd_ffm_mle_mixednoise!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers, n, t)
+    buffers.r .= 2 .* buffers.ω .* buffers.r .- (buffers.ω .* buffers.r).^2 .* obs.entropy[n, t]
+    gradient_opd_ffm_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers)
 end
 
-@views function gradient_phase_ffm_mle_gaussiannoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, gain, exptime, area, nlayers, precorr_object, entropy, npatches, unsmooth, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_layerdim_real)
-    r .*= ω
-    gradient_phase_ffm_mle!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, gain, exptime, area, nlayers, precorr_object, entropy, npatches, unsmooth, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_layerdim_real)
-end
+@views function gradient_opd_ffm_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers)
+    block_replicate!(buffers.c, buffers.r)
+    conj!(buffers.p)
+    for np=1:patches.npatches
+        for w₁=1:reconstruction.nλ
+            correlate!(buffers.d2, buffers.object_precorr[w₁, np], buffers.c)            
+            for w₂=1:reconstruction.nλint
+                w = (w₁-1)*reconstruction.nλint + w₂
+                buffers.container_builddim_real .= buffers.d2
+                mul!(buffers.d2, refraction_adj[w], buffers.container_builddim_real)
 
-@views function gradient_phase_ffm_mle_mixednoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, gain, exptime, area, nlayers, precorr_object, entropy, npatches, unsmooth, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_layerdim_real)
-    r .= 2 .* ω .* r .- (ω .* r).^2 .* entropy
-    gradient_phase_ffm_mle!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, gain, exptime, area, nlayers, precorr_object, entropy, npatches, unsmooth, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_layerdim_real)
-end
+                buffers.p[:, :, np, w] .*= buffers.d2
+                buffers.iffts(buffers.d, buffers.p[:, :, np, w])
 
-@views function gradient_phase_ffm_mle!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, gain, exptime, area, nlayers, precorr_object, entropy, npatches, unsmooth, refraction_adj, extractor_adj, ifft!, container_builddim_real, container_layerdim_real)
-    block_replicate!(c, r)
-    conj!(p)
-    for np=1:npatches
-        for w₁=1:nλ
-            correlate!(d2, precorr_object[w₁, np], c)            
-            for w₂=1:nλint
-                w = (w₁-1)*nλint + w₂
-                container_builddim_real .= d2
-                mul!(d2, refraction_adj[w], container_builddim_real)
-
-                p[:, :, np, w] .*= d2
-                ifft!(d, p[:, :, np, w])
-
-                d .*= P[:, :, np, w]
-                d2 .= imag.(d)
-                d2 .*= -4 * response[w] * transmission[w] * gain * exptime * area
-                if !isnothing(unsmooth)
-                    correlate!(d2, unsmooth, d2)
+                buffers.d .*= buffers.P[:, :, np, w]
+                buffers.d2 .= imag.(buffers.d)
+                buffers.d2 .*= FTYPE(-4pi) * reconstruction.Δλ/reconstruction.λ[w] * obs.optics.response[w] * atmosphere.transmission[w] * obs.detector.gain * obs.detector.exptime * obs.aperture_area
+                if !isnothing(buffers.unsmooth)
+                    correlate!(buffers.d2, buffers.unsmooth, buffers.d2)
                 end
 
-                for l=1:nlayers
-                    mul!(container_layerdim_real, extractor_adj[np, l, w], d2)
-                    g[:, :, l, w] .+= container_layerdim_real
+                for l=1:atmosphere.nlayers
+                    mul!(buffers.container_layerdim_real, extractor_adj[np, l, w], buffers.d2)
+                    buffers.gradient_buffer[:, :, l] .+= buffers.container_layerdim_real
                 end
             end
         end
     end
 end
 
-# @views function fg_phase_mle(x, g, observations, atmosphere, masks, patches, reconstruction, object)
+@views function fg_phase_ffm_mle(x, g, observations, atmosphere, patches, reconstruction, object)
+    FTYPE = gettype(reconstruction)  # Alias for the datatype
+    atmosphere.phase .= x
+    ndatasets = length(observations)  # Number of datasets to be processed
+    helpers = reconstruction.helpers  # Alias for helpers, makes it quicker to type
+    regularizers = reconstruction.regularizers  # Alias for regularizers, makes it quicker to type
+    zeros!(g)  # Fill gradient with zeros, OptimPack initializes it with undef's, which can give crazy NaN values 
+    reconstruction.ϵ = zero(FTYPE)
+    if reconstruction.plot == true  # If plotting is enabled, object and phase plots will be updated here with the current proposed values
+        update_phase_figure(x, atmosphere, reconstruction)
+    end
+    
+    for dd=1:ndatasets  # Loop through data channels
+        ## Aliases for dataset-dependent parameters
+        obs = observations[dd]  # Dataset from the full set
+        detector = obs.detector
+        extractors = helpers.extractor[dd]
+        extractors_adj = helpers.extractor_adj[dd]  # Interpolation operators for punch out        
+        refraction = helpers.refraction[dd, :]  # Refraction operator for the dataset
+        refraction_adj = helpers.refraction_adj[dd, :]  # Inverse refraction operator for the dataset
+        zeros!(obs.model_images)
+        ##
+        reconstruction.ϵ += tmapreduce(+, collect(Iterators.product(1:obs.nepochs, 1:obs.nsubaps))) do (t, n)  # Loop through all timesteps
+            ϵ_local = zero(FTYPE)
+            buffers = take_wf_buffers(helpers, dd)
+            subap_image = obs.model_images[:, :, n, t]  # Model image for each subap at each time
+            create_radiant_energy_pre_detector!(subap_image, obs, object, atmosphere, patches, refraction, extractors[t, :, :, :], buffers, (; n, t))
+            subap_image ./= detector.gain
+            buffers.ω .= reconstruction.weight_function(obs.entropy[n, t], subap_image, detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
+            ϵ_local += loglikelihood_gaussian!(buffers.r, obs.images[:, :, n, t], subap_image, buffers.ω)  # Calculate the gaussian likelihood for the calculated model image and data frame
+            reconstruction.gradient_wf(reconstruction, obs, atmosphere, patches, refraction_adj, extractors_adj[t, :, :, :], buffers, (; n, t))
+            put_wf_buffers(helpers, dd, buffers)
+            return ϵ_local
+        end
+    end
+
+    for ~=1:Threads.nthreads()
+        buffer = take!(helpers.channels.wavefront_gradient_buffer)
+        g .+= buffer
+        zeros!(buffer)
+        put!(helpers.channels.wavefront_gradient_buffer, buffer)
+    end
+
+    ## Apply regularization
+    for l=1:atmosphere.nlayers
+        for w₁=1:reconstruction.nλ
+            for w₂=1:reconstruction.nλint 
+                w = (w₁-1)*reconstruction.nλint + w₂
+                reconstruction.ϵ += regularizers.wf_reg(x[:, :, l, w], g[:, :, l, w], regularizers.βwf)
+            end
+        end
+    end
+
+    return reconstruction.ϵ
+end
+
+@views function gradient_phase_ffm_mle_gaussiannoise!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers, ixs)
+    buffers.r .*= 2 .* buffers.ω
+    gradient_phase_ffm_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers)
+end
+
+@views function gradient_phase_ffm_mle_mixednoise!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers, ixs)
+    buffers.r .= 2 .* buffers.ω .* buffers.r .- (buffers.ω .* buffers.r).^2 .* obs.entropy[ixs.n, ixs.t]
+    gradient_phase_ffm_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers)
+end
+
+@views function gradient_phase_ffm_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers)
+    block_replicate!(buffers.c, buffers.r)
+    conj!(buffers.p)
+    for np=1:patches.npatches
+        for w₁=1:reconstruction.nλ
+            correlate!(buffers.d2, buffers.object_precorr[w₁, np], buffers.c)            
+            for w₂=1:reconstruction.nλint
+                w = (w₁-1)*reconstruction.nλint + w₂
+                buffers.container_builddim_real .= buffers.d2
+                mul!(buffers.d2, refraction_adj[w], buffers.container_builddim_real)
+
+                buffers.p[:, :, np, w] .*= buffers.d2
+                buffers.iffts(buffers.d, buffers.p[:, :, np, w])
+
+                buffers.d .*= buffers.P[:, :, np, w]
+                buffers.d2 .= imag.(buffers.d)
+                buffers.d2 .*= -2 * obs.optics.response[w] * atmosphere.transmission[w] * obs.detector.gain * obs.detector.exptime * obs.aperture_area
+
+                if !isnothing(buffers.unsmooth)
+                    correlate!(buffers.d2, buffers.unsmooth, buffers.d2)
+                end
+
+                for l=1:atmosphere.nlayers
+                    mul!(buffers.container_layerdim_real, extractor_adj[np, l, w], buffers.d2)
+                    buffers.gradient_buffer[:, :, l, w] .+= buffers.container_layerdim_real
+                end
+            end
+        end
+    end
+end
+
+# @views function fg_phase_mle(x, g, observations, atmosphere, patches, reconstruction, object)
 #     FTYPE = gettype(reconstruction)  # Alias for the datatype
 #     ndatasets = length(observations)  # Number of datasets to be processed
 #     helpers = reconstruction.helpers  # Alias for helpers, makes it quicker to type
 #     regularizers = reconstruction.regularizers  # Alias for regularizers, makes it quicker to type
-#     fill!(g, zero(FTYPE))  # Fill gradient with zeros, OptimPack initializes it with undef's, which can give crazy NaN values
-#     fill!(helpers.g_threads_wf, zero(FTYPE))  # Fill phase gradient buffer with zeros
-#     fill!(helpers.ϵ_threads, zero(FTYPE))  # Fill criterion vector with zeros
-
+#     zeros!(g)  # Fill gradient with zeros, OptimPack initializes it with undef's, which can give crazy NaN values 
+#     reconstruction.ϵ = zero(FTYPE)
+    
 #     for dd=1:ndatasets  # Loop through data channels
 #         ## Aliases for dataset-dependent parameters
-#         observation = observations[dd]  # Dataset from the full set
-#         detector = observation.detector
-#         optics = observation.optics  # Makes it easier to type
-#         mask = masks[dd]  # Masks for that dataset
+#         obs = observations[dd]  # Dataset from the full set
+#         detector = obs.detector
+#         optics = obs.optics  # Makes it easier to type
+#         mask = obs.masks  # Masks for that dataset
 #         scale_psfs = mask.scale_psfs  # Scaler to multiply the PSFs by to ensure unit volume
 #         refraction = helpers.refraction[dd, :]  # Refraction operator for the dataset
 #         refraction_adj = helpers.refraction_adj[dd, :]  # Inverse refraction operator for the dataset
-#         r = helpers.r[dd]  # Buffer to hold residuals
-#         ω = helpers.ω[dd]  # Buffer to hold statistical weights
-#         ϕ_static = observation.phase_static  # Static phase for the dataset
+#         ϕ_static = obs.phase_static  # Static phase for the dataset
 #         ## 
-#         fill!(observation.model_images, zero(FTYPE))  # Fill the model images with zeros to ensure a fresh start
-#         Threads.@threads :static for t=1:observation.nepochs  # Loop through all timesteps
-#             tid = Threads.threadid()  # Indexing is done by the thread id, which remains constant under the :static thread scheduler
-#             tix = (dd==1) ? t : observations[dd-1].nepochs + t
-#             ϕ = x[:, :, tix, :]
+#         nepochs_prev = (dd>1) ? observations[dd-1].nepochs : 0
+#         zeros!(obs.model_images)  # Fill the model images with zeros to ensure a fresh start
+#         reconstruction.ϵ += tmapreduce(+, collect(Iterators.product(1:obs.nepochs, 1:obs.nsubaps))) do (t, n)  # Loop through all timesteps
+#             ϵ_local = zero(FTYPE)
 #             ## Aliases for time-dependent parameters
-#             iffts = helpers.ift[tid]  # Pre-allocated FFTs
-#             convs = helpers.convolve[tid]  # Pre-allocated convolutions
-#             A = atmosphere.A[:, :, tix, :]  # Buffer for amplitude
-#             smoothing = helpers.smooth[tid]  # Function to smooth the composite phase
-#             unsmoothing = helpers.unsmooth[tid]
-#             P = helpers.P[:, :, 1, :, tid]  # Pupil function buffers 
-#             p = helpers.p[:, :, 1, :, tid]  # IFFT of pupil function buffers
-#             psfs = helpers.psf[:, :, :, :, tid]  # PSF buffer
-#             psf_temp = helpers.psf_temp[:, :, tid]  # Temporary array needed to compute PSF
-#             image_temp_big = helpers.image_temp_big[:, :, tid]  # Buffer to hold the full-size spectral image
-#             image_temp_small = helpers.image_temp_small[dd][:, :, tid]  # Buffer to hold the downsampled spectral image
-#             ##
-#             fill!(psfs, zero(FTYPE))
-#             for n=1:observation.nsubaps  # Loop through all subaps
-#                 ## Aliases for subap-dependent parameters
-#                 subap_model_image = observation.model_images[:, :, n, t]  # Model image for each subap at each time
-#                 subap_mask = mask.masks[:, :, n, :]  # Mask for each subap at all wavelengths
-#                 ##
-#                 create_radiant_energy_pre_detector!(subap_model_image, image_temp_small, image_temp_big, psfs, psf_temp, scale_psfs, object.object, observation.aperture_area, detector.exptime, subap_mask, A, P, p, refraction, iffts, convs, object.background / (observation.dim^2 * observation.nsubaps), atmosphere.transmission, optics.response, ϕ, ϕ_static, smoothing, reconstruction.nλ, reconstruction.nλint, reconstruction.Δλ)
-#                 subap_model_image ./= detector.gain  # Add the background, which is specified per image, so scale by the number of pixels first
-#                 ω[:, :, tid] .= reconstruction.weight_function(observation.entropy[n, t], subap_model_image, detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
-#                 helpers.ϵ_threads[tid] += loglikelihood_gaussian(r[:, :, tid], observation.images[:, :, n, t], subap_model_image, ω[:, :, tid])  # Calculate the gaussian likelihood for the calculated model image and data frame
-#                 reconstruction.gradient_wf(helpers.g_threads_wf[:, :, tix, :, tid], r[:, :, tid], ω[:, :, tid], P, p, helpers.c[:, :, tid], helpers.d[:, :, tid], helpers.d2[:, :, tid], reconstruction.λtotal, reconstruction.Δλtotal, reconstruction.nλ, reconstruction.nλint, optics.response, atmosphere.transmission, detector.gain, detector.exptime, observation.aperture_area, helpers.o_corr[:, :, tid], observation.entropy[n, t], unsmoothing, refraction_adj, iffts, helpers.containers_builddim_real[:, :, tid])
-#             end
+#             iffts, conv_plan, corr_plan, A, ϕ_slices, ϕ_composite, smooth, unsmooth, P, p, psf, psf_temp, object_patch, object_precorr, ω, r, image_big, image_small, c, d, d2, container_builddim_real, container_layerdim_real, gradient_buffer = take_wf_buffers(helpers, dd)
+#             ones!(A)
+#             zeros!(psf)
+
+#             subap_image = obs.model_images[:, :, n, t]  # Model image for each subap at each time
+#             subap_mask = mask.masks[:, :, n, :]  # Mask for each subap at all wavelengths
+#             create_radiant_energy_pre_detector!(subap_image, image_small, image_big, psf, psf_temp, scale_psfs, object.object, obs.aperture_area, detector.exptime, subap_mask, A, P, p, refraction, iffts, conv_plan, object.background / obs.dim^2 / obs.nsubaps, atmosphere.transmission, optics.response, x[:, :, t + nepochs_prev, :], ϕ_static, smooth, reconstruction.nλ, reconstruction.nλint, reconstruction.Δλ)
+#             subap_image ./= detector.gain
+#             ω .= reconstruction.weight_function(obs.entropy[n, t], subap_image, detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
+#             ϵ_local += loglikelihood_gaussian!(r, obs.images[:, :, n, t], subap_image, ω)  # Calculate the gaussian likelihood for the calculated model image and data frame
+#             reconstruction.gradient_wf(gradient_buffer, r, ω, P, p, c, d, d2, reconstruction.λtotal, reconstruction.Δλtotal, reconstruction.nλ, reconstruction.nλint, optics.response, atmosphere.transmission, detector.gain, detector.exptime, obs.aperture_area, object_precorr, obs.entropy[n, t], unsmooth, refraction_adj, iffts, container_builddim_real)
+    
+#             put_wf_buffers(helpers, dd, iffts, conv_plan, corr_plan, A, ϕ_slices, ϕ_composite, smooth, unsmooth, P, p, psf, psf_temp, object_patch, object_precorr, ω, r, image_big, image_small, c, d, d2, container_builddim_real, container_layerdim_real, gradient_buffer)
+
+#             return ϵ_local
 #         end
 #     end
 
-#     ϵ = sum(helpers.ϵ_threads)
-#     for tid=1:Threads.nthreads()  # Add together the gradients computed from each thread
-#         g .+= helpers.g_threads_wf[:, :, :, :, tid]
+#     for ~=1:Threads.nthreads()
+#         buffer = take!(helpers.channels.wavefront_gradient_buffer)
+#         g .+= buffer
+#         zeros!(buffer)
+#         put!(helpers.channels.wavefront_gradient_buffer, buffer)
 #     end
 
 #     ## Apply regularization
-#     for l=1:atmosphere.nlayers
-#         for w₁=1:reconstruction.nλ
-#             for w₂=1:reconstruction.nλint 
-#                 w = (w₁-1)*reconstruction.nλint + w₂
-#                 ϵ += regularizers.wf_reg(x[:, :, l, w], g[:, :, l, w], regularizers.βwf)
+#     for dd=1:ndatasets
+#         obs = observations[dd]
+#         nepochs_prev = (dd>1) ? observations[dd-1].nepochs : 0
+#         for t=1:obs.nepochs
+#             for w₁=1:reconstruction.nλ
+#                 for w₂=1:reconstruction.nλint 
+#                     w = (w₁-1)*reconstruction.nλint + w₂
+#                     reconstruction.ϵ += regularizers.wf_reg(x[:, :, t + nepochs_prev, w], g[:, :, t + nepochs_prev, w], regularizers.βwf)
+#                 end
 #             end
 #         end
 #     end
 
-#     reconstruction.ϵ = ϵ
-#     return ϵ
+#     return reconstruction.ϵ
 # end
 
 # @views function gradient_phase_mle_gaussiannoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, gain, exptime, area, precorr_object, entropy, unsmooth!, refraction_adj, ifft!, container_builddim_real)
-
+#     r .*= 2 .* ω
+#     gradient_phase_mle!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, gain, exptime, area, precorr_object, entropy, unsmooth!, refraction_adj, ifft!, container_builddim_real)
 # end
 
 # @views function gradient_phase_mle_mixednoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, gain, exptime, area, precorr_object, entropy, unsmooth!, refraction_adj, ifft!, container_builddim_real)
-
+#     r .= 2 .* ω .* r .- (ω .* r).^2 .* entropy
+#     gradient_phase_mle!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, gain, exptime, area, precorr_object, entropy, unsmooth!, refraction_adj, ifft!, container_builddim_real)
 # end
+
+# @views function gradient_phase_mle!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, gain, exptime, area, precorr_object, entropy, unsmooth!, refraction_adj, ifft!, container_builddim_real)
+#     block_replicate!(c, r)
+#     conj!(p)
+#     for w₁=1:nλ
+#         correlate!(d2, precorr_object[w₁, 1], c)            
+#         for w₂=1:nλint
+#             w = (w₁-1)*nλint + w₂
+#             container_builddim_real .= d2
+#             mul!(d2, refraction_adj[w], container_builddim_real)
+
+#             p[:, :, 1, w] .*= d2
+#             ifft!(d, p[:, :, 1, w])
+
+#             d .*= P[:, :, 1, w]
+#             d2 .= imag.(d)
+#             d2 .*= -2 * response[w] * transmission[w] * gain * exptime * area
+#             if !isnothing(unsmooth!)
+#                 correlate!(d2, unsmooth!, d2)
+#             end
+
+#             g[:, :, w] .+= d2
+#         end
+#     end
+# end
+
+# @views function fg_psf_mle(x, g, observations, atmosphere, masks, patches, reconstruction, object)
+# end
+
+# @views function gradient_psf_mle_gaussiannoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, gain, exptime, area, precorr_object, entropy, unsmooth!, refraction_adj, ifft!, container_builddim_real)
+# end
+
+# @views function gradient_psf_mle_mixednoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, gain, exptime, area, precorr_object, entropy, unsmooth!, refraction_adj, ifft!, container_builddim_real)
+# end
+
+# @views function gradient_psf_mle!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, gain, exptime, area, precorr_object, entropy, unsmooth!, refraction_adj, ifft!, container_builddim_real)
+# end
+
+
+function take_object_buffers(helpers, dd)
+    iffts = take!(helpers.channels.ift)  # Pre-allocated FFTs
+    conv_plan = take!(helpers.channels.convolve)  # Pre-allocated convolutions
+    corr_plan = take!(helpers.channels.correlate)  # Pre-allocated correlations
+    A = take!(helpers.channels.builddim_real)  # Buffer for amplitude
+    ϕ_slices = take!(helpers.channels.builddim_real)  # Buffer for per-layer phase
+    ϕ_composite = take!(helpers.channels.builddim_real)  # Buffer for composite phase
+    smooth = take!(helpers.channels.smooth)  # Function to smooth the composite phase
+    P = take!(helpers.channels.builddim_cplx_4d)  # Pupil function buffers 
+    p = take!(helpers.channels.builddim_cplx_4d)  # IFFT of pupil function buffers
+    psf = take!(helpers.channels.builddim_real_4d)  # PSF buffer
+    psf_temp = take!(helpers.channels.builddim_real)  # Temporary array needed to compute PSF
+    object_patch = take!(helpers.channels.builddim_real)  # Object-times-patch weight buffer
+    ω = take!(helpers.channels.imagedim[dd])
+    r = take!(helpers.channels.imagedim[dd])
+    image_big = take!(helpers.channels.builddim_real)  # Buffer to hold the full-size spectral image
+    image_small = take!(helpers.channels.imagedim[dd])  # Buffer to hold the downsampled spectral image
+    container_builddim_real = take!(helpers.channels.builddim_real)
+    gradient_buffer = take!(helpers.channels.object_gradient_buffer)
+    ones!(A)
+    zeros!(psf)
+    return (; iffts, conv_plan, corr_plan, A, ϕ_slices, ϕ_composite, smooth, P, p, psf, psf_temp, object_patch, ω, r, image_big, image_small, container_builddim_real, gradient_buffer)
+end
+
+function put_object_buffers(helpers, dd, buffers)
+    put!(helpers.channels.ift, buffers.iffts)  # Pre-allocated FFTs
+    put!(helpers.channels.convolve, buffers.conv_plan)  # Pre-allocated convolutions
+    put!(helpers.channels.correlate, buffers.corr_plan)  # Pre-allocated correlations
+    put!(helpers.channels.builddim_real, buffers.A)  # Buffer for amplitude
+    put!(helpers.channels.builddim_real, buffers.ϕ_slices)  # Buffer for per-layer phase
+    put!(helpers.channels.builddim_real, buffers.ϕ_composite)  # Buffer for composite phase
+    put!(helpers.channels.smooth, buffers.smooth)  # Function to smooth the composite phase
+    put!(helpers.channels.builddim_cplx_4d, buffers.P)  # Pupil function buffers 
+    put!(helpers.channels.builddim_cplx_4d, buffers.p)  # IFFT of pupil function buffers
+    put!(helpers.channels.builddim_real_4d, buffers.psf)  # PSF buffer
+    put!(helpers.channels.builddim_real, buffers.psf_temp)  # Temporary array needed to compute PSF
+    put!(helpers.channels.builddim_real, buffers.object_patch)  # Object-times-patch weight buffer
+    put!(helpers.channels.imagedim[dd], buffers.ω)
+    put!(helpers.channels.imagedim[dd], buffers.r)
+    put!(helpers.channels.builddim_real, buffers.image_big)  # Buffer to hold the full-size spectral image
+    put!(helpers.channels.imagedim[dd], buffers.image_small)  # Buffer to hold the downsampled spectral image
+    put!(helpers.channels.builddim_real, buffers.container_builddim_real)
+    put!(helpers.channels.object_gradient_buffer, buffers.gradient_buffer)
+end
+
+function take_wf_buffers(helpers, dd)
+    iffts = take!(helpers.channels.ift)  # Pre-allocated FFTs
+    conv_plan = take!(helpers.channels.convolve)  # Pre-allocated convolutions
+    corr_plan = take!(helpers.channels.correlate)  # Pre-allocated correlations
+    A = take!(helpers.channels.builddim_real)  # Buffer for amplitude
+    ϕ_slices = take!(helpers.channels.builddim_real)  # Buffer for per-layer phase
+    ϕ_composite = take!(helpers.channels.builddim_real)  # Buffer for composite phase
+    smooth = take!(helpers.channels.smooth)  # Function to smooth the composite phase
+    unsmooth = take!(helpers.channels.unsmooth)  # Function to smooth the composite phase
+    P = take!(helpers.channels.builddim_cplx_4d)  # Pupil function buffers 
+    p = take!(helpers.channels.builddim_cplx_4d)  # IFFT of pupil function buffers
+    psf = take!(helpers.channels.builddim_real_4d)  # PSF buffer
+    psf_temp = take!(helpers.channels.builddim_real)  # Temporary array needed to compute PSF
+    object_patch = take!(helpers.channels.builddim_real)  # Object-times-patch weight buffer
+    object_precorr = take!(helpers.channels.object_precorr)
+    ω = take!(helpers.channels.imagedim[dd])
+    r = take!(helpers.channels.imagedim[dd])
+    image_big = take!(helpers.channels.builddim_real)  # Buffer to hold the full-size spectral image
+    image_small = take!(helpers.channels.imagedim[dd])  # Buffer to hold the downsampled spectral image
+    c = take!(helpers.channels.builddim_real)
+    d = take!(helpers.channels.builddim_cplx)
+    d2 = take!(helpers.channels.builddim_real)
+    container_builddim_real = take!(helpers.channels.builddim_real)
+    container_layerdim_real = take!(helpers.channels.layerdim_real)
+    gradient_buffer = take!(helpers.channels.wavefront_gradient_buffer)
+    ones!(A)
+    zeros!(psf)
+    return (; iffts, conv_plan, corr_plan, A, ϕ_slices, ϕ_composite, smooth, unsmooth, P, p, psf, psf_temp, object_patch, object_precorr, ω, r, image_big, image_small, c, d, d2, container_builddim_real, container_layerdim_real, gradient_buffer)
+end
+
+function put_wf_buffers(helpers, dd, buffers)
+    put!(helpers.channels.ift, buffers.iffts)  # Pre-allocated FFTs
+    put!(helpers.channels.convolve, buffers.conv_plan)  # Pre-allocated convolutions
+    put!(helpers.channels.correlate, buffers.corr_plan)  # Pre-allocated correlations
+    put!(helpers.channels.builddim_real, buffers.A)  # Buffer for amplitude
+    put!(helpers.channels.builddim_real, buffers.ϕ_slices)  # Buffer for per-layer phase
+    put!(helpers.channels.builddim_real, buffers.ϕ_composite)  # Buffer for composite phase
+    put!(helpers.channels.smooth, buffers.smooth)  # Function to smooth the composite phase
+    put!(helpers.channels.unsmooth, buffers.unsmooth)  # Function to smooth the composite phase
+    put!(helpers.channels.builddim_cplx_4d, buffers.P)  # Pupil function buffers 
+    put!(helpers.channels.builddim_cplx_4d, buffers.p)  # IFFT of pupil function buffers
+    put!(helpers.channels.builddim_real_4d, buffers.psf)  # PSF buffer
+    put!(helpers.channels.builddim_real, buffers.psf_temp)  # Temporary array needed to compute PSF
+    put!(helpers.channels.builddim_real, buffers.object_patch)  # Object-times-patch weight buffer
+    put!(helpers.channels.object_precorr, buffers.object_precorr)
+    put!(helpers.channels.imagedim[dd], buffers.ω)
+    put!(helpers.channels.imagedim[dd], buffers.r)
+    put!(helpers.channels.builddim_real, buffers.image_big)  # Buffer to hold the full-size spectral image
+    put!(helpers.channels.imagedim[dd], buffers.image_small)  # Buffer to hold the downsampled spectral image
+    put!(helpers.channels.builddim_real, buffers.c)
+    put!(helpers.channels.builddim_cplx, buffers.d)
+    put!(helpers.channels.builddim_real, buffers.d2)
+    put!(helpers.channels.layerdim_real, buffers.container_layerdim_real)
+    put!(helpers.channels.builddim_real, buffers.container_builddim_real)
+    put!(helpers.channels.wavefront_gradient_buffer, buffers.gradient_buffer)
+end

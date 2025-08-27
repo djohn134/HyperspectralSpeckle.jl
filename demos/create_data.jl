@@ -41,10 +41,9 @@ saturation = 30000.0  # e⁻
 gain = saturation / (typemax(DTYPE))  # e⁻ / ADU
 DTYPE = FTYPE
 exptime = 5e-3  # sec
-nepochs = 31
+nepochs = 11
 times = collect(0:nepochs-1) .* exptime
-# times = [0.0]
-noise = true
+noise = false
 ζ = 0.0  # deg
 ########## Create Optical System ##########
 filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
@@ -76,7 +75,7 @@ observations_full = Observations(
     D=D,
     D_inner_frac=D_inner_frac,
     times=times,
-    # nsubexp=1,
+    nsubexp=1,
     nsubaps_side=1,
     dim=image_dim,
     ϕ_static=ϕ_static_full,
@@ -109,7 +108,7 @@ observations_wfs = Observations(
     D=D,
     area=aperture_area,
     times=times,
-    # nsubexp=1,
+    nsubexp=1,
     nsubaps_side=nsubaps_side,
     dim=wfs_dim,
     ϕ_static=ϕ_static_wfs,
@@ -190,7 +189,7 @@ atmosphere = Atmosphere(
     λ_nyquist=λ_nyquist,
     λ_ref=λ_ref,
     propagate=propagate,
-    # seeds=seeds, 
+    seeds=seeds, 
     FTYPE=FTYPE,
     verb=verb
 )
@@ -205,7 +204,7 @@ writefits(atmosphere.phase, "$(folder)/Dr0_$(round(Int64, Dr0_ref_vertical))_pha
 # using BenchmarkTools
 # @btime [create_detector_images($patches, $observations[dd], $atmosphere, $object, build_dim=$image_dim, noise=$noise, verb=$verb) for dd=1:length(observations)]
 [create_detector_images(patches, observations[dd], atmosphere, object, build_dim=image_dim, noise=noise, verb=verb) for dd=1:length(observations)]
-[writefits(observations[dd].images, "$(folder)/Dr0_$(round(Int64, Dr0_ref_vertical))_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_images$(id).fits", header=create_header(observations[dd])) for dd=1:length(observations)]
+[writefits(observations[dd].images, "$(folder)/Dr0_$(round(Int64, Dr0_ref_vertical))_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_images$(id).fits", header=create_header(observations[dd]), times=observations[dd].times) for dd=1:length(observations)]
 ###########################################
 
 ## Isoplanatic

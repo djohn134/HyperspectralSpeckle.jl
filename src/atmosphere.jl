@@ -29,6 +29,7 @@ mutable struct Atmosphere{T<:AbstractFloat}
     dim::Int64
     A::Array{T, 4}
     phase::Array{T, 4}
+    opd::Array{T, 3}
     function Atmosphere(
         λ,
         observations,
@@ -273,7 +274,7 @@ end
                     for np=1:patches.npatches
                         for w=1:atmosphere.nλ
                             for l=1:atmosphere.nlayers
-                                position2phase!(buffer[:, :, tid], nyquist_mask[:, :, 1, w], deextractors[(t-1)*observations[dd].nsubexp + tsub, np, l, w])
+                                mul!(buffer[:, :, tid], deextractors[(t-1)*observations[dd].nsubexp + tsub, np, l, w], nyquist_mask[:, :, 1, w])
                                 layer_mask[:, :, l, w, tid] .= layer_mask[:, :, l, w, tid] .|| round.(Bool, buffer[:, :, tid])
                             end
                         end

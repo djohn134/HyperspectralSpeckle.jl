@@ -51,10 +51,6 @@ function create_extractor_adjoint(position, screen_dim, input_dim, scaleby_heigh
     return extractor_adj
 end
 
-function position2phase!(ϕ_out, ϕ_full, extractor)
-    mul!(ϕ_out, extractor, ϕ_full)
-end
-
 function create_refraction_operator(λ, λ_ref, ζ, pixscale, build_dim; FTYPE=Float64)
     kernel = LinearSpline(FTYPE)
     transform = AffineTransform2D{FTYPE}()
@@ -105,7 +101,7 @@ end
 @views function calculate_composite_phase!(ϕ_composite, ϕ_slices, ϕ_full, nlayers, extractors)
     fill!(ϕ_composite, zero(eltype(ϕ_composite)))
     for l=1:nlayers
-        position2phase!(ϕ_slices, ϕ_full[:, :, l], extractors[l])
+        mul!(ϕ_slices, extractors[l], ϕ_full[:, :, l])
         ϕ_composite .+= ϕ_slices
     end
 end
@@ -125,27 +121,33 @@ end
     FTYPE = gettype(patches)
     nthreads = Threads.nthreads()
     channel_builddim_real = Channel{Matrix{FTYPE}}(6 * nthreads)
+    channel_builddim_real_4d = Channel{Array{FTYPE, 4}}(2 * nthreads)
     channel_builddim_cplx = Channel{Matrix{Complex{FTYPE}}}(2 * nthreads)
+    channel_builddim_cplx_4d = Channel{Array{Complex{FTYPE}, 4}}(2 * nthreads)
     channel_builddim_ones = Channel{Matrix{Complex{FTYPE}}}(nthreads)
     channel_imagedim = Channel{Matrix{FTYPE}}(2 * nthreads)
     channel_iffts = Channel{Function}(nthreads)
     channel_convs = Channel{ConvolutionPlan{FTYPE}}(nthreads)
-
-    foreach(1:6*nthreads) do _
+    channel_smooth = Channel{Nothing}(nthreads)
+    foreach(1:6*nthreads) do ~
         put!(channel_builddim_real, zeros(FTYPE, build_dim, build_dim))
     end
 
-    foreach(1:2*nthreads) do _
+    foreach(1:2*nthreads) do ~
         put!(channel_imagedim, zeros(FTYPE, observations.dim, observations.dim))
         put!(channel_builddim_cplx, zeros(Complex{FTYPE}, build_dim, build_dim))
+        put!(channel_builddim_cplx_4d, zeros(Complex{FTYPE}, build_dim, build_dim, patches.npatches, object.nλ))
     end
 
-    foreach(1:nthreads) do _
+    foreach(1:nthreads) do ~
+        put!(channel_builddim_real_4d, zeros(FTYPE, build_dim, build_dim, patches.npatches, object.nλ))
         put!(channel_iffts, setup_ifft(Complex{FTYPE}, build_dim)[1])
         put!(channel_convs, ConvolutionPlan(build_dim, FTYPE=FTYPE))
         put!(channel_builddim_ones, ones(FTYPE, build_dim, build_dim))
+        put!(channel_smooth, nothing)
     end
-
+    channels = (; channel_builddim_real, channel_builddim_real_4d, channel_builddim_cplx, channel_builddim_cplx_4d, channel_builddim_ones, channel_imagedim, channel_iffts, channel_convs, channel_smooth)
+    
     scaleby_height = layer_scale_factors(atmosphere.heights, object.range)
     scaleby_wavelength = atmosphere.λ_nyquist ./ atmosphere.λ
     DTYPE = gettypes(observations.detector)[end]
@@ -155,99 +157,93 @@ end
     if verb == true
         println("Creating $(observations.dim)×$(observations.dim) images for $(observations.nepochs) times ($(observations.nsubexp) subexposures each) and $(observations.nsubaps) subaps")
     end
-    create_detector_images!(patches, observations, atmosphere, object, refraction, extractors, channel_builddim_real, channel_builddim_cplx, channel_builddim_ones, channel_imagedim, channel_iffts, channel_convs, noise=noise)
+    create_detector_images!(patches, observations, atmosphere, object, refraction, extractors, channels, noise=noise)
 end
 
-@views function create_detector_images!(patches, observations, atmosphere, object, refraction, extractors, channel_builddim_real, channel_builddim_cplx, channel_builddim_ones, channel_imagedim, channel_iffts, channel_convs; noise=false)
-    FTYPE = gettype(observations)
-    nλint = 1
-    prog = Progress(observations.nepochs*observations.nsubexp*observations.nsubaps)
-    smooth = nothing
-    tforeach(1:observations.nepochs) do t
-        image_float = take!(channel_imagedim)
-        image_small = take!(channel_imagedim)
-        image_big = take!(channel_builddim_real)
-        psf = take!(channel_builddim_real)
-        psf_temp = take!(channel_builddim_real)
-        object_patch = take!(channel_builddim_real)
-        A = take!(channel_builddim_ones)
-        P = take!(channel_builddim_cplx)
-        p = take!(channel_builddim_cplx)
-        ϕ_composite = take!(channel_builddim_real)
-        ϕ_slices = take!(channel_builddim_real)
-        iffts = take!(channel_iffts)
-        convs = take!(channel_convs)
-        for n=1:observations.nsubaps
-            fill!(image_float, zero(FTYPE))
-            for tsub=1:observations.nsubexp 
-                create_radiant_energy_pre_detector!(image_float, image_small, image_big, psf, psf_temp, observations.masks.scale_psfs, object.object, patches.w, object_patch, observations.aperture_area, observations.detector.exptime / observations.nsubexp, observations.masks.masks[:, :, n, :], A, P, p, refraction, iffts, convs, object.background / observations.dim^2 / observations.nsubaps, atmosphere.transmission, observations.optics.response, ϕ_composite, observations.phase_static, ϕ_slices, atmosphere.phase, smooth, atmosphere.nlayers, extractors[(t-1)*observations.nsubexp + tsub, :, :, :], atmosphere.sampling_nyquist_mperpix, atmosphere.heights, patches.npatches, atmosphere.nλ, nλint, atmosphere.Δλ)
-                next!(prog)
-            end
+function take_buffers(channels)
+    image_float = take!(channels.channel_imagedim)
+    image_small = take!(channels.channel_imagedim)
+    image_big = take!(channels.channel_builddim_real)
+    psf = take!(channels.channel_builddim_real_4d)
+    psf_temp = take!(channels.channel_builddim_real)
+    object_patch = take!(channels.channel_builddim_real)
+    A = take!(channels.channel_builddim_ones)
+    P = take!(channels.channel_builddim_cplx_4d)
+    p = take!(channels.channel_builddim_cplx_4d)
+    ϕ_composite = take!(channels.channel_builddim_real)
+    ϕ_slices = take!(channels.channel_builddim_real)
+    iffts = take!(channels.channel_iffts)
+    conv_plan = take!(channels.channel_convs)
+    smooth = take!(channels.channel_smooth)
+    zeros!(image_float)
+    return (; image_float, image_small, image_big, psf, psf_temp, object_patch, A, P, p, ϕ_composite, ϕ_slices, iffts, conv_plan, smooth)
+end
 
-            image_float .= max.(zero(FTYPE), image_float)
-            if noise == true
-                add_noise!(image_float, observations.detector.rn, true, FTYPE=FTYPE)
-            end
-            image_float .= min.(image_float, observations.detector.saturation)
-            image_float ./= observations.detector.gain  # Converts e⁻ to counts
-            convert_image(observations.images[:, :, n, t], image_float) # Converts floating-point counts to integer at bitdepth of detector
+function put_buffers(buffers, channels)
+    put!(channels.channel_imagedim, buffers.image_float)
+    put!(channels.channel_imagedim, buffers.image_small)
+    put!(channels.channel_builddim_real, buffers.image_big)
+    put!(channels.channel_builddim_real_4d, buffers.psf)
+    put!(channels.channel_builddim_real, buffers.psf_temp)
+    put!(channels.channel_builddim_real, buffers.object_patch)
+    put!(channels.channel_builddim_ones, buffers.A)
+    put!(channels.channel_builddim_cplx_4d, buffers.P)
+    put!(channels.channel_builddim_cplx_4d, buffers.p)
+    put!(channels.channel_builddim_real, buffers.ϕ_composite)
+    put!(channels.channel_builddim_real, buffers.ϕ_slices)
+    put!(channels.channel_iffts, buffers.iffts)
+    put!(channels.channel_convs, buffers.conv_plan)
+    put!(channels.channel_smooth, buffers.smooth)
+end
+
+@views function create_detector_images!(patches, observations, atmosphere, object, refraction, extractors, channels; noise=false)
+    FTYPE = gettype(observations)
+    prog = Progress(observations.nepochs*observations.nsubexp*observations.nsubaps)
+    tforeach(collect(Iterators.product(1:observations.nepochs, 1:observations.nsubaps))) do (t, n)
+        buffers = take_buffers(channels)
+        for tsub=1:observations.nsubexp 
+            create_radiant_energy_pre_detector!(buffers.image_float, observations, object, atmosphere, patches, refraction, extractors[(t-1)*observations.nsubexp + tsub, :, :, :], buffers, (; n, t))
+            next!(prog)
         end
-        put!(channel_imagedim, image_float)
-        put!(channel_imagedim, image_small)
-        put!(channel_builddim_real, image_big)
-        put!(channel_builddim_real, psf)
-        put!(channel_builddim_real, psf_temp)
-        put!(channel_builddim_real, object_patch)
-        put!(channel_builddim_ones, A)
-        put!(channel_builddim_cplx, P)
-        put!(channel_builddim_cplx, p)
-        put!(channel_builddim_real, ϕ_composite)
-        put!(channel_builddim_real, ϕ_slices)
-        put!(channel_iffts, iffts)
-        put!(channel_convs, convs)
+
+        buffers.image_float .= max.(zero(FTYPE), buffers.image_float)
+        if noise == true
+            add_noise!(buffers.image_float, observations.detector.rn, true, FTYPE=FTYPE)
+        end
+        buffers.image_float .= min.(buffers.image_float, observations.detector.saturation)
+        buffers.image_float ./= observations.detector.gain  # Converts e⁻ to counts
+        convert_image(observations.images[:, :, n, t], buffers.image_float) # Converts floating-point counts to integer at bitdepth of detector
+        put_buffers(buffers, channels)
     end
     finish!(prog)
 end
 
-@views function create_radiant_energy_pre_detector!(image, image_small_temp, image_big_temp, psf::AbstractMatrix{<:AbstractFloat}, psf_temp, scale_psfs, object, patch_weight, object_patch, aperture_area, exptime, masks, A, P::AbstractMatrix{<:Complex{<:AbstractFloat}}, p::AbstractMatrix{<:Complex{<:AbstractFloat}}, refraction, iffts, conv_plan, background, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smooth, nlayers, extractors, sampling_nyquist_mperpix, heights, npatches, nλ, nλint, Δλ)
-    fill!(image, zero(eltype(image)))
-    for np=1:npatches
-        for w₁=1:nλ
-            for w₂=1:nλint
-                w = (w₁-1)*nλint + w₂
-                create_spectral_irradiance_at_aperture!(image_small_temp, image_big_temp, psf, psf_temp, scale_psfs[w], object[:, :, w], patch_weight[:, :, np], object_patch, masks[:, :, w], A, P, p, refraction[w], iffts, conv_plan, background / (Δλ * nλ * nλint * npatches), atmosphere_transmission[w], optics_response[w], ϕ_composite, phase_static[:, :, w], ϕ_slices, ϕ_full[:, :, :, w], smooth, nlayers, extractors[np, :, w], sampling_nyquist_mperpix, heights, nλint)
-                image .+= image_small_temp .* (Δλ * aperture_area * exptime)
+@views function create_radiant_energy_pre_detector!(image, observations, object, atmosphere, patches, refraction, extractors, buffers, ixs)
+    for np=1:patches.npatches
+        for w₁=1:atmosphere.nλ
+            for w₂=1:object.nλint
+                w = (w₁-1)*object.nλint + w₂
+                create_spectral_irradiance_at_aperture!(observations, object, atmosphere, patches, refraction, extractors, buffers, (; ixs..., np, w))
+                image .+= buffers.image_small .* (atmosphere.Δλ * observations.aperture_area * observations.detector.exptime)
             end
         end
     end
 end
 
-@views function create_radiant_energy_pre_detector!(image, image_small_temp, image_big_temp, psfs::AbstractArray{<:AbstractFloat, 4}, psf_temp, scale_psfs, object, patch_weight, object_patch, aperture_area, exptime, masks, A, P::AbstractArray{<:Complex{<:AbstractFloat}, 4}, p::AbstractArray{<:Complex{<:AbstractFloat}, 4}, refraction, iffts, conv!, background, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smooth, nlayers, extractors, sampling_nyquist_mperpix, heights, npatches, nλ, nλint, Δλ)
-    for np=1:npatches
-        for w₁=1:nλ
-            for w₂=1:nλint 
-                w = (w₁-1)*nλint + w₂
-                create_spectral_irradiance_at_aperture!(image_small_temp, image_big_temp, psfs[:, :, np, w], psf_temp, scale_psfs[w], object[:, :, w], patch_weight[:, :, np], object_patch, masks[:, :, w], A, P[:, :, np, w], p[:, :, np, w], refraction[w], iffts, conv!, background  / (Δλ * nλ * nλint * npatches), atmosphere_transmission[w], optics_response[w], ϕ_composite, phase_static[:, :, w], ϕ_slices, ϕ_full[:, :, :, w], smooth, nlayers, extractors[np, :, w], sampling_nyquist_mperpix, heights, nλint)
-                image .+= image_small_temp .* (Δλ * aperture_area * exptime)
-            end
-        end
+@views function create_spectral_irradiance_at_aperture!(observations, object, atmosphere, patches, refraction, extractors, buffers, ixs)
+    calculate_composite_pupil!(buffers.A, buffers.ϕ_composite, buffers.ϕ_slices, atmosphere.phase[:, :, :, ixs.w], atmosphere.nlayers, extractors[ixs.np, :, ixs.w], observations.masks.masks[:, :, ixs.n, ixs.w], atmosphere.sampling_nyquist_mperpix, atmosphere.heights)
+    if !isnothing(buffers.smooth)
+        convolve!(buffers.ϕ_composite, buffers.smooth, buffers.ϕ_composite)
     end
-end
+    buffers.ϕ_composite .+= observations.phase_static[:, :, ixs.w]
+    
+    pupil2psf!(buffers.psf[:, :, ixs.np, ixs.w], buffers.psf_temp, observations.masks.masks[:, :, ixs.n, ixs.w], buffers.P[:, :, ixs.np, ixs.w], buffers.p[:, :, ixs.np, ixs.w], buffers.A, buffers.ϕ_composite, observations.masks.scale_psfs[ixs.w], buffers.iffts, refraction[ixs.w])
+    buffers.psf[:, :, ixs.np, ixs.w] ./= object.nλint
 
-@views function create_spectral_irradiance_at_aperture!(image_small_temp, image_big_temp, psf, psf_temp, scale_psfs, object, patch_weight, object_patch, masks, A, P, p, refraction, iffts, conv_plan, background, atmosphere_transmission, optics_response, ϕ_composite, phase_static, ϕ_slices, ϕ_full, smooth, nlayers, extractors, sampling_nyquist_mperpix, heights, nλint)
-    calculate_composite_pupil!(A, ϕ_composite, ϕ_slices, ϕ_full, nlayers, extractors, masks, sampling_nyquist_mperpix, heights)
-    if !isnothing(smooth)
-        convolve!(ϕ_composite, smooth, ϕ_composite)
-    end
-    ϕ_composite .+= phase_static
+    buffers.object_patch .= patches.w[:, :, ixs.np] .* object.object[:, :, ixs.w]
+    convolve!(buffers.image_big, buffers.conv_plan, buffers.object_patch, buffers.psf[:, :, ixs.np, ixs.w])
+    block_reduce!(buffers.image_small, buffers.image_big)
 
-    pupil2psf!(psf, psf_temp, masks, P, p, A, ϕ_composite, scale_psfs, iffts, refraction)
-    psf ./= nλint
-
-    object_patch .= patch_weight .* object
-    convolve!(image_big_temp, conv_plan, object_patch, psf)
-    block_reduce!(image_small_temp, image_big_temp)
-
-    image_small_temp .+= background
-    image_small_temp .*= optics_response * atmosphere_transmission
+    buffers.image_small .+= object.background / (atmosphere.Δλ * atmosphere.nλ * object.nλint * patches.npatches)
+    buffers.image_small .*= observations.optics.response[ixs.w] * atmosphere.transmission[ixs.w]
 end

@@ -5,7 +5,8 @@ using Statistics
 using DelimitedFiles
 using ZernikePolynomials
 import Interpolations: LinearInterpolation, Line
-FFTW.set_provider!("mkl")
+FFTW.set_provider!("fftw")
+FFTW.set_num_threads(1)
 
 
 mutable struct ConvolutionPlan{T<:Number}
@@ -124,13 +125,18 @@ function create_header(observations::Observations{<:Number, <:Number})
     return header
 end
 
-function writefits(x, filename; verb=true, header=nothing)
-    f = FITS(filename, "w")
-    if header !== nothing
-        header = FITSHeader(header...)
+function writefits(x, filename; verb=true, header=nothing, times=nothing)
+    FITS(filename, "w") do f
+        if !isnothing(header)
+            header = FITSHeader(header...)
+        end
+        write(f, x, header=header)
+
+        if !isnothing(times)
+            write(f, times)
+        end
     end
-    write(f, x, header=header)
-    close(f)
+    
     if verb == true
         print("Written to "); printstyled("$(filename)\n", color=:red)
     end
@@ -194,17 +200,24 @@ function readqe(filename; λ=[])
 end
 
 @views function readimages(file::String; FTYPE=Float64)
-    images = readfits(file, FTYPE=FTYPE)
+    f = FITS(file)
+    hdr = read_header(file)
+
+    images = FTYPE.(read(f[1]))
     images = repeat(images, 1, 1, 1, 1)
     nsubaps = size(images, 3);
     nepochs = size(images, 4);
     dim = size(images, 1);
     
-    hdr = read_header(file)
     exptime = hdr["EXPTIME"]
     elapsed = hdr["TELAPSE"]
     tstart = hdr["TIME-START"]
-    times = collect(tstart:elapsed:tstart+(nepochs-1)*elapsed)   
+    times = try
+        times = read(f[2])
+    catch
+        times = []
+    end
+
     return images, nsubaps, nepochs, dim, exptime, times
 end
 
@@ -453,11 +466,11 @@ function filter_to_rmse!(ϕ_smooth, ϕ, rms_target, mask, dim; FTYPE=Float64)
 end
 
 function select_fft_plan(::Type{T}, dim) where {T<:Real}
-    return plan_rfft(Matrix{T}(undef, dim, dim), flags=FFTW.MEASURE), Matrix{Complex{T}}(undef, dim÷2+1, dim)
+    return plan_rfft(Matrix{T}(undef, dim, dim)), Matrix{Complex{T}}(undef, dim÷2+1, dim)
 end
 
 function select_fft_plan(::Type{T}, dim) where {T<:Complex}
-    return plan_fft(Matrix{T}(undef, dim, dim), flags=FFTW.MEASURE), Matrix{T}(undef, dim, dim)
+    return plan_fft(Matrix{T}(undef, dim, dim)), Matrix{T}(undef, dim, dim)
 end
 
 function setup_fft(::Type{T}, dim) where {T}
@@ -470,11 +483,11 @@ function setup_fft(::Type{T}, dim) where {T}
 end
 
 function select_ifft_plan(::Type{T}, dim) where {T<:Real}
-    return plan_irfft(Matrix{Complex{T}}(undef, dim÷2+1, dim), dim, flags=FFTW.MEASURE), Matrix{T}(undef, dim, dim)
+    return plan_irfft(Matrix{Complex{T}}(undef, dim÷2+1, dim), dim), Matrix{T}(undef, dim, dim)
 end
 
 function select_ifft_plan(::Type{T}, dim) where {T<:Complex}
-    return plan_ifft(Matrix{T}(undef, dim, dim), flags=FFTW.MEASURE), Matrix{T}(undef, dim, dim)
+    return plan_ifft(Matrix{T}(undef, dim, dim)), Matrix{T}(undef, dim, dim)
 end
 
 function setup_ifft(::Type{T}, dim) where {T}
