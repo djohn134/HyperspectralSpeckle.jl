@@ -24,8 +24,8 @@ nλint = 1
 λmin = λ_nyquist = 500.0e-9
 λmax = 500.0e-9
 λ = (nλ == 1) ? [mean([λmax, λmin])] : collect(range(λmin, stop=λmax, length=nλ))
+λ₀ = (nλ₀ == 1) ? [mean([λmax, λmin])] : collect(range(λmin, stop=λmax, length=nλ₀))
 Δλ = (nλ == 1) ? 1.0 : (λmax - λmin) / (nλ - 1)
-resolution = mean(λ) / Δλ
 ###########################################
 
 ########## Anisopatch Parameters ##########
@@ -81,8 +81,7 @@ observations_full = Observations(
     label="Full Aperture",
     FTYPE=FTYPE
 )
-# observations = [observations_full]
-optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
+##### Create WFS Observations object ######
 detector_wfs = Detector(
     qe=qe,
     rn=rn,
@@ -95,8 +94,7 @@ detector_wfs = Detector(
     label="Wavefront Sensor",
     FTYPE=FTYPE
 )
-### Create Full-Ap Observations object ####
-ϕ_static_wfs = zeros(FTYPE, image_dim, image_dim, nλ)
+datafile = "$(folder)/Dr0_20_ISH6x6_images.fits"
 observations_wfs = Observations(
     times_wfs,
     images_wfs,
@@ -187,8 +185,8 @@ reconstruction = Reconstruction(
     λmax=λmax,
     nλ=nλ,
     nλint=nλint,
-    niter_mfbd=10,
-    maxiter=10,
+    niter_mfbd=100,
+    maxiter=30,
     # indx_boot=[1:2],
     wavefront_parameter=:phase,
     frozen_flow=true,
@@ -204,3 +202,9 @@ reconstruction = Reconstruction(
 );
 reconstruct!(reconstruction, observations, atmosphere, object, patches, write=true, folder=folder, id=id)
 ###########################################
+
+# calculate_composite_pupil_eff(patches, atmosphere, observations, object, masks, build_dim=image_dim, propagate=false)
+# writefits(patches.ϕ_slices, "$(folder)/phase_recon_slices$(id).fits")
+# writefits(patches.ϕ_composite, "$(folder)/phase_recon_composite$(id).fits")
+# writefits(atmosphere.masks, "$(folder)/layer_masks$(id).fits")
+# writefits(atmosphere.opd, "$(folder)/opd_recon_planesubtracted$(id).fits")
