@@ -1,7 +1,6 @@
 using Random
 using Statistics
 using LazyAlgebra
-using FourierTools
 using TwoDimensional
 using LinearInterpolators 
 import Interpolations: interpolate, Gridded, Linear
@@ -11,7 +10,9 @@ mutable struct Atmosphere{T<:AbstractFloat}
     nlayers::Int64
     l0::T
     L0::T
+    Cn2::Vector{T}
     r0::Vector{T}
+    τ0::T
     wind::Matrix{T}
     heights::Vector{T}
     sampling_nyquist_mperpix::Vector{T}
@@ -21,11 +22,39 @@ mutable struct Atmosphere{T<:AbstractFloat}
     λ_ref::T
     nλ::Int64
     Δλ::T
+<<<<<<< HEAD
+    propagate::Bool
+=======
+>>>>>>> main
     seeds::Vector{Int64}
     masks::Array{T, 4}
     dim::Int64
-    positions::Array{T, 4}
     A::Array{T, 4}
+<<<<<<< HEAD
+    phase::Array{T, 4}
+    opd::Array{T, 3}
+    function Atmosphere(
+        λ,
+        observations,
+        object,
+        patches;
+        l0=0.01,
+        L0=100.0,
+        Dr0=NaN,
+        r0=[NaN],
+        wind=[NaN NaN;], 
+        heights=[NaN],
+        transmission=[1.0],
+        sampling_nyquist_mperpix=[NaN],
+        sampling_nyquist_arcsecperpix=[NaN],
+        λ_nyquist=400e-9,
+        λ_ref=500e-9,
+        propagate=false,
+        seeds=rand(1:2^16, length(heights)),
+        create_screens=true,
+        verb=true,
+        FTYPE=Float64
+=======
     opd::Array{T, 3}
     ϕ::Array{T, 4}
     ϕ_slices::Array{T, 5}
@@ -45,26 +74,54 @@ mutable struct Atmosphere{T<:AbstractFloat}
             maskfile="",
             verb=true,
             FTYPE=Float64
+>>>>>>> main
         )
         nlayers = length(heights)
         nλ = length(λ)
         Δλ = (nλ == 1) ? 1.0 : (maximum(λ) - minimum(λ)) / (nλ - 1)        
+<<<<<<< HEAD
+        τ0 = NaN
+        Cn2 = [NaN]
+        if !isnan(Dr0) && any(isnan.(r0))
+            r0_ref_composite = observations[1].D / (Dr0 * secd(observations[1].ζ))
+            r0, Cn2 = composite_r0_to_layers(r0_ref_composite, heights, λ_ref, observations[1].ζ)
+            τ0 = calculate_coherence_time(λ_ref, observations[1].ζ, r0, Cn2, wind, heights)
+=======
         
         if verb == true
             println("Creating $(nlayers) layer atmosphere with wind speeds $(wind[:, 1]) km/s at $(wind[:, 2]) deg")
+>>>>>>> main
         end
+        
+        atmosphere = new{FTYPE}(nlayers, l0, L0, Cn2, r0, τ0, wind, heights, transmission, sampling_nyquist_mperpix, sampling_nyquist_arcsecperpix, λ, λ_nyquist, λ_ref, nλ, Δλ, propagate, seeds)
+        if verb == true
+            display(atmosphere)
+        end
+        calculate_atmosphere_parameters!(atmosphere, observations, object, patches, verb=verb)
 
+<<<<<<< HEAD
+        if create_screens == true
+            create_phase_screens!(atmosphere, verb=verb)
+            atmosphere.phase .*= atmosphere.masks
+        end
+        return atmosphere
+=======
         if maskfile == ""
             return new{FTYPE}(nlayers, l0, L0, r0, wind, heights, sampling_nyquist_mperpix, sampling_nyquist_arcsecperpix, λ, λ_nyquist, λ_ref, nλ, Δλ, seeds)
         else
             mask = readfits(maskfile, FTYPE=FTYPE)
             return new{FTYPE}(nlayers, l0, L0, r0, wind, heights, sampling_nyquist_mperpix, sampling_nyquist_arcsecperpix, λ, λ_nyquist, λ_ref, nλ, Δλ, seeds, mask)
         end
+>>>>>>> main
     end
 end
 
 function layer_nyquist_sampling_arcsecperpix(D, fov, layer_heights, image_dim)
+<<<<<<< HEAD
+    Dmeta = D .+ (fov / 206265) .* layer_heights
+=======
     Dmeta = D .+ (fov/206265) .* (layer_heights .* 1000)
+>>>>>>> main
     sampling_nyquist_arcsecperpix = (fov / image_dim) .* (2*D ./ Dmeta)
     return sampling_nyquist_arcsecperpix
 end
@@ -149,6 +206,30 @@ function generate_phase_screen_kolmogorov(atmosphere, observations; grow=4, FTYP
     return FTYPE.(ϕ)
 end
 
+<<<<<<< HEAD
+function layer_scale_factors(layer_heights, object_height)
+    return 1 .- layer_heights ./ object_height
+end
+
+function calculate_screen_size!(atmosphere, observations, object, patches; verb=true)
+    if all(isnan.(atmosphere.wind)) == false
+        ndatasets = length(observations)
+        mint = minimum([minimum(observations[dd].times) for dd=1:length(observations)])
+        maxt = maximum([maximum(observations[dd].times) for dd=1:length(observations)])
+        maxexp = maximum([observations[dd].detector.exptime for dd=1:length(observations)])
+        maxt += maxexp
+        Δt = maxt - mint
+        Δpos_meters_total = Δt .* [atmosphere.wind[:, 1].*sind.(atmosphere.wind[:, 2]) atmosphere.wind[:, 1].*cosd.(atmosphere.wind[:, 2])]'
+        Δpos_pix_total = Δpos_meters_total ./ minimum(atmosphere.sampling_nyquist_mperpix)
+        Δpix_refraction = maximum([maximum(abs.(refraction_at_layer_pix(atmosphere, observations[dd]))) for dd=1:ndatasets])
+        Δpix_aniso = 2*maximum(abs.(patches.positions)) * (object.sampling_arcsecperpix / 206265) * maximum(atmosphere.heights) / minimum(atmosphere.sampling_nyquist_mperpix)
+        max_image_size = maximum([observations[dd].dim for dd=1:ndatasets])
+        atmosphere.dim = nextprod((2, 3, 5, 7), maximum(ceil.(abs.(Δpos_pix_total))) + max_image_size + Δpix_refraction + Δpix_aniso)
+    else
+        max_image_size = maximum([observations[dd].dim for dd=1:length(observations)])
+        atmosphere.dim = max_image_size
+    end
+=======
 function calculate_screen_size!(atmosphere, observations; verb=true)
     if verb == true
         print("Atmosphere size calculated to be ")
@@ -173,14 +254,74 @@ function calculate_screen_size!(atmosphere, observations, object, patches; verb=
     Δpix_refraction = maximum(abs.(refraction_at_layer_pix(atmosphere, observations)))
     Δpix_aniso = 2*maximum(abs.(patches.positions)) * (object.sampling_arcsecperpix / 206265) * maximum(atmosphere.heights)*1000 / minimum(atmosphere.sampling_nyquist_mperpix)
     atmosphere.dim = nextprod((2, 3, 5, 7), maximum(ceil.(abs.(Δpos_pix_total))) + observations.dim + Δpix_refraction + Δpix_aniso)
+>>>>>>> main
     if verb == true
         println("$(atmosphere.dim)×$(atmosphere.dim) pixels")
     end
 end
 
-@views function create_phase_screens!(atmosphere, observations; verb=true)
-    FTYPE = gettype(observations)
+@views function calculate_pupil_positions!(atmosphere, observations; verb=true)
+    FTYPE = gettype(atmosphere)
+    ndatasets = length(observations)
+    if verb == true
+        [println("Calculating pupil positions for $(atmosphere.nlayers) layers at $(observations[dd].nepochs) times and $(atmosphere.nλ) wavelengths") for dd=1:ndatasets]
+    end
 
+<<<<<<< HEAD
+    mint = minimum([minimum(observations[dd].times) for dd=1:ndatasets])
+    maxt = maximum([maximum(observations[dd].times) for dd=1:ndatasets])
+    maxexp = maximum([observation.detector.exptime for observation in observations])
+    maxt += maxexp
+    Δt_total = maxt - mint
+    maxt = (maxt==0) ? 1.0 : maxt
+    Δpos_meters_total = Δt_total .* [atmosphere.wind[:, 1].*sind.(atmosphere.wind[:, 2]) atmosphere.wind[:, 1].*cosd.(atmosphere.wind[:, 2])]'
+    Δpos_pix_total = Δpos_meters_total ./ minimum(atmosphere.sampling_nyquist_mperpix)
+    initial_coord = [(atmosphere.dim .- Δpos_pix_total[:, l]) / 2 for l=1:atmosphere.nlayers]
+    for dd=1:ndatasets
+        Δtsubexp = observations[dd].detector.exptime / observations[dd].nsubexp
+        Δpix_refraction = refraction_at_layer_pix(atmosphere, observations[dd])
+        observations[dd].positions = zeros(FTYPE, 2, observations[dd].nepochs*observations[dd].nsubexp, atmosphere.nlayers, atmosphere.nλ)
+        for w=1:atmosphere.nλ
+            for l=1:atmosphere.nlayers
+                for t=1:observations[dd].nepochs
+                    for tsub=1:observations[dd].nsubexp
+                        observations[dd].positions[:, (t-1)*observations[dd].nsubexp + tsub, l, w] .= initial_coord[l] .+ (Δpos_pix_total[:, l] .* (((observations[dd].times[t] + Δtsubexp * (tsub - 1)) - mint) / Δt_total))
+                        observations[dd].positions[1, (t-1)*observations[dd].nsubexp + tsub, l, w] -= Δpix_refraction[l, w]
+                    end
+                end
+            end
+        end
+    end
+end
+
+function calculate_atmosphere_parameters!(atmosphere, observations, object, patches; verb=true)
+    for obs in observations
+        if obs.nsubexp == -1
+            nsubexp = ceil(obs.detector.exptime / atmosphere.τ0)
+            obs.nsubexp = isnan(nsubexp) ? 1 : nsubexp
+        end
+    end
+    calculate_screen_size!(atmosphere, observations, object, patches, verb=verb)
+    calculate_pupil_positions!(atmosphere, observations, verb=verb)
+    calculate_layer_masks!(patches, atmosphere, observations, object, build_dim=object.dim, verb=verb)
+end
+
+@views function create_phase_screens!(atmosphere; verb=true)
+    FTYPE = gettype(atmosphere)
+    if verb == true
+        println("Creating $(atmosphere.nlayers) layers of size $(atmosphere.dim)×$(atmosphere.dim) with r0=$(atmosphere.r0) m (at $(atmosphere.λ_ref) nm)")
+    end
+
+    # atmosphere.A = ones(FTYPE, observations.dim, observations.dim, observations.nepochs, atmosphere.nλ)
+    atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
+    
+    Threads.@threads for w=1:atmosphere.nλ
+        sampling_mperpix = atmosphere.sampling_nyquist_mperpix .* (atmosphere.λ[w]/atmosphere.λ_nyquist)
+        r0λ = atmosphere.r0 * (atmosphere.λ[w] / atmosphere.λ_ref)^(6/5)
+        for l=1:atmosphere.nlayers
+            atmosphere.phase[:, :, l, w] .= generate_phase_screen_subharmonics(r0λ[l], atmosphere.dim, sampling_mperpix[l], atmosphere.L0, atmosphere.l0, seed=atmosphere.seeds[l], FTYPE=FTYPE)
+            atmosphere.phase[:, :, l, w] .-= mean(atmosphere.phase[findall(atmosphere.masks[:, :, l, w] .> 0), l, w])
+=======
     if verb==true
         println("Creating $(atmosphere.nlayers) layers of size $(atmosphere.dim)×$(atmosphere.dim) with r0=$(atmosphere.r0) m (at $(atmosphere.λ_ref) nm)")
     end
@@ -221,12 +362,41 @@ end
             for t=2:observations.nepochs
                 atmosphere.positions[:, t, l, w] .= atmosphere.positions[:, 1, l, w] .+ (Δpos_pix[:, l].*(t-1))
             end
+>>>>>>> main
         end
     end
 end
 
-function layer_scale_factors(layer_heights, object_height)
-    return 1 .- layer_heights ./ object_height
+@views function calculate_layer_masks!(patches, atmosphere, observations, object; build_dim=object.dim, verb=true)
+    if all(isnan.(atmosphere.wind)) == false
+        if verb == true
+            println("Creating sausage masks for $(atmosphere.nlayers) layers at $(atmosphere.nλ) wavelengths")
+        end
+        FTYPE = gettype(atmosphere)
+        ndatasets = length(observations)
+        scaleby_wavelength = atmosphere.λ_nyquist ./ atmosphere.λ
+        scaleby_height = layer_scale_factors(atmosphere.heights, object.range)
+        buffer = zeros(FTYPE, atmosphere.dim, atmosphere.dim, Threads.nthreads())
+        layer_mask = zeros(Bool, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ, Threads.nthreads())
+        nyquist_mask, ~ = make_ish_masks(build_dim, 1, atmosphere.λ, λ_nyquist=atmosphere.λ_nyquist, verb=false, FTYPE=FTYPE)
+        for dd=1:ndatasets
+            deextractors = create_patch_extractors_adjoint(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
+            Threads.@threads :static for t=1:observations[dd].nepochs
+                tid = Threads.threadid()
+                for tsub=1:observations[dd].nsubexp
+                    for np=1:patches.npatches
+                        for w=1:atmosphere.nλ
+                            for l=1:atmosphere.nlayers
+                                mul!(buffer[:, :, tid], deextractors[(t-1)*observations[dd].nsubexp + tsub, np, l, w], nyquist_mask[:, :, 1, w])
+                                layer_mask[:, :, l, w, tid] .= layer_mask[:, :, l, w, tid] .|| round.(Bool, buffer[:, :, tid])
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        atmosphere.masks = min.(1.0, dropdims(sum(layer_mask, dims=5), dims=5))
+    end
 end
 
 function air_refractive_index_minus_one(λ; pressure=69.328, temperature=293.15, H2O_pressure=1.067)
@@ -255,7 +425,7 @@ function air_refractive_index_minus_one(λ; pressure=69.328, temperature=293.15,
     P = pressure * 7.50061683 # kPa -> mmHg
     T = temperature - 273.15 # K -> C
     W = H2O_pressure * 7.50061683 # kPa -> mmHg
-    sigma_squared = 1.0 / ((λ*1e-9) * 1e6)^2.0 # inverse wavenumber squared in micron^-2
+    sigma_squared = 1.0 / (λ * 1e6)^2.0 # inverse wavenumber squared in micron^-2
     n_minus_one = (64.328 + (29498.1 / (146.0 - sigma_squared))+ (255.4 / (41.0 - sigma_squared))) * 1e-6
     n_minus_one *= P * (1.0 + (1.049 - 0.0157 * T) * 1e-6 * P) / (720.883 * (1.0 + 0.003661 * T))
     n_minus_one -= (0.0624 - 0.000680 * sigma_squared)/(1.0 + 0.003661 * T) * W * 1e-6
@@ -284,7 +454,7 @@ function get_refraction(λ, ζ; pressure=69.328, temperature=293.15, H2O_pressur
     # n_squared = (nm1 + 1)**2
     # r0 = (n_squared - 1.0) / (2.0 * n_squared)
     r0 = nm1 * (nm1+2) / 2.0 / (nm1^2 + 2*nm1 + 1)
-    return r0 * tan(ζ*pi/180)
+    return r0 * tand(ζ)
 end
 
 function refraction_at_layer_pix(atmosphere, observations)
@@ -294,7 +464,11 @@ function refraction_at_layer_pix(atmosphere, observations)
     for w=1:atmosphere.nλ
         θλ = get_refraction(atmosphere.λ[w], observations.ζ)
         for l=1:atmosphere.nlayers
+<<<<<<< HEAD
+            Δpix[l, w] = ((θλ - θref) * atmosphere.heights[l]) / atmosphere.sampling_nyquist_mperpix[l]
+=======
             Δpix[l, w] = ((θλ - θref) * (atmosphere.heights[l]*1000)) / atmosphere.sampling_nyquist_mperpix[l]
+>>>>>>> main
         end
     end
 
@@ -319,7 +493,7 @@ end
     ny = nx'
     k = 2pi / λ
     nlayers = length(heights)
-    Δh = (heights[2:end] .- heights[1:nlayers-1]) .* 1000
+    Δh = (heights[2:end] .- heights[1:nlayers-1])
     α = heights ./ heights[nlayers]
     δ = (1 .- α) .* delta1 .+ α .* deltan
     m = δ[2:nlayers] ./ δ[1:nlayers-1]
@@ -367,13 +541,12 @@ function CN2_huffnagel_valley_generalized(h; A=1.7e-14, hA=100, B=2.7e-16, hB=15
 end
 
 function wind_profile_greenwood(h, ζ)
-    v = 8 .+ 30 .* exp.(-( (h .* cos(ζ*pi/180) .- 9.4) ./ 4.8 ).^2 )
+    v = 8 .+ 30 .* exp.(-( (h .* cosd(ζ) .- 9.4) ./ 4.8 ).^2 )
     return v
 end
 
-function wind_profile_roberts2011(h, ζ; A₀=5.0, A₁=29.6, A₂=12.335, A₃=3.405)#, site, month)
-    # A₀, A₁, A₂, A₃ = get_roberts2011_coeffs(site, month)
-    v = A₀ .+ A₁ .* exp.( -( (h .* cos(ζ*pi/180) .- A₂) ./ A₃ ).^2 )
+function wind_profile_roberts2011(h, ζ; A₀=5.0, A₁=29.6, A₂=12335.0, A₃=3405.0)
+    v = A₀ .+ A₁ .* exp.( -( (h .* cosd(ζ) .- A₂) ./ A₃ ).^2 )
     return v
 end
 
@@ -402,3 +575,30 @@ end
     return opd_smooth
 end
 
+<<<<<<< HEAD
+function composite_r0_to_layers(r0_target, heights, λ, ζ)
+    heights = max.(10, heights)
+    Cn2 = CN2_huffnagel_valley_generalized.(heights)
+    k = 2pi / λ
+    r0(x) = (0.423 * k^2 * secd(ζ) * sum(heights .* x))^(-3/5)
+    diff = (r0(Cn2) - r0_target) / r0_target
+    while abs(diff) > 1e-3
+        Cn2 .+= 0.001 .* sign(diff) .* Cn2
+        diff = (r0(Cn2) - r0_target) / r0_target
+    end
+    r0_layers = (0.423 .* k^2 * secd(ζ) .* Cn2 .* heights).^(-3/5)
+    return r0_layers, Cn2
+end
+
+@views function calculate_coherence_time(λ, ζ, r0, Cn2, wind, heights)
+    if length(heights) > 1
+        freq_greenwood = 2.31 * mean(λ)^(-6/5) * (secd(ζ) * integrate(heights, Cn2 .* wind[:, 1].^(5/3)))^(3/5)
+        coherence_time = 1 / freq_greenwood
+    elseif length(heights) == 1
+        coherence_time = 0.314 * r0[1] / wind[1, 1]
+    end
+
+    return coherence_time
+end
+=======
+>>>>>>> main

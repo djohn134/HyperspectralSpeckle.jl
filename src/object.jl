@@ -1,29 +1,39 @@
 using FITSIO
+using Statistics
 using NumericalIntegration
 using Interpolations: interpolate, Gridded, Linear
 
 
 mutable struct Object{T<:AbstractFloat}
+    dim::Int64
     λ::Vector{T}
     nλ::Int64
-    height::T
+    nλint::Int64
+    Δλ::T
+    range::T
     fov::T
     sampling_arcsecperpix::T
     spectrum::Vector{T}
-    flux::T
-    background_flux::T
+    irradiance::T
+    background::T
     object::Array{T, 3}
-    function Object(; 
-            flux=Inf,
-            background_flux=0,
+    function Object(
+            object_arr;
+            irradiance=Inf,
+            background=0,
             λ=[Inf], 
+            nλint=1,
             dim=0, 
             fov=0,
-            height=0,
+            object_range=0,
             spectrum=[0],
+<<<<<<< HEAD
+            scaled=false,
+=======
             qe=[0],
             objectfile="",
             template=false, 
+>>>>>>> main
             FTYPE=Float64,
             verb=true
         )
@@ -33,6 +43,14 @@ mutable struct Object{T<:AbstractFloat}
         nλ = length(λ)
         Δλ = (nλ == 1) ? 1.0 : (maximum(λ) - minimum(λ)) / (nλ - 1)
         sampling_arcsecperpix = fov / dim
+<<<<<<< HEAD
+        if scaled == false
+            for w=1:nλ
+                object_arr[:, :, w] .*= spectrum[w]
+            end
+            object_arr ./= sum(object_arr)
+            object_arr .*= irradiance / Δλ
+=======
         if (template == true) && (objectfile != "")
             object, ~ = template2object(objectfile, dim, λ, FTYPE=FTYPE)
             for w=1:nλ
@@ -56,10 +74,26 @@ mutable struct Object{T<:AbstractFloat}
             return new{FTYPE}(λ, nλ, height, fov, sampling_arcsecperpix, spectrum, flux, background_flux, object)
         else
             return new{FTYPE}(λ, nλ, height, fov, sampling_arcsecperpix, spectrum)
+>>>>>>> main
         end
+        object = new{FTYPE}(dim, λ, nλ, nλint, Δλ, object_range, fov, sampling_arcsecperpix, spectrum, irradiance, background, object_arr)
+        if verb == true
+            display(object)
+        end
+        return object
     end
 end
 
+<<<<<<< HEAD
+function mag2flux(mag, filter; ζ=0.0)
+    ## Flux at top of atmosphere
+    airmass = secd(ζ)
+    irradiance_vega = magnitude_zeropoint(filter.λ, filter.response)  # ph/s/m^2
+    # radiant_energy_target = exptime * area * irradiance_vega * 10^(-(mag + 0.3*airmass) / 2.5)  # ph
+    irradiance_target = irradiance_vega * 10^(-(mag + 0.3*airmass) / 2.5)  # ph/s/m^2
+    # return radiant_energy_target
+    return irradiance_target
+=======
 function mag2flux(mag; D=3.6, ζ=0.0, exptime=20e-3, qe=0.7, adc_gain = 1.0, filter="V")
     area = pi*(D/2)^2
     airmass = sec(ζ*pi/180)
@@ -118,14 +152,19 @@ function magnitude_zeropoint(λmin, λmax, λfilter, filter_response)
     filter_itp = interpolate((λfilter,), filter_response, Gridded(Linear()))
     nphot = NumericalIntegration.integrate(λ, flux .* filter_itp(λ))
     return nphot
+>>>>>>> main
 end
 
 function magnitude_zeropoint(λfilter, filter_response)
     # Photons per square meter per second produced by a 0th mag star above the atmosphere.
     # Assuming spectrum like Vega
-    ~, flux = vega_spectrum(λ=λfilter)
-    nphot = NumericalIntegration.integrate(λfilter, flux .* filter_response)
-    return nphot
+    h = 6.63e-34  # J s
+    c = 3e8  # m / s
+
+    ~, spectral_irradiance = vega_spectrum(λ=λfilter)  # W/m^2/m
+    spectral_irradiance ./= h*c ./ λfilter  # ph/s/m^2/m
+    irradiance = NumericalIntegration.integrate(λfilter, spectral_irradiance .* filter_response)  # ph/s/m^2
+    return irradiance
 end
 
 @views function template2object(template, dim, λ; FTYPE=Float64)
@@ -147,7 +186,7 @@ end
     materials[6] = 1e-2*materials[1];
     # Read in data image (FITS format)
     object_coeffs = Int.(crop(readfits(template), dim))
-    spectra = hcat([[sum([materials[i][ll+1] * λ[k].^ll for ll in 0:length(materials[i])-1]) for k = 1:nλ] for i=1:nmaterials]...) ./ 100
+    spectra = hcat([[sum([materials[i][ll+1] * (λ[k].*1e9).^ll for ll in 0:length(materials[i])-1]) for k = 1:nλ] for i=1:nmaterials]...) ./ 100
 
     for i = 1:nmaterials    
         indx = findall(object_coeffs .== i)
@@ -196,4 +235,23 @@ end
     for np in nonzero
         coeffs[np, :] .= poly_fit(λ, object[np, :], ncoeffs-1)
     end
+end
+
+@views function fit_background(observations)
+    FTYPE = gettype(observations)
+    backgrounds = zeros(FTYPE, observations.dim, observations.dim, observations.nsubaps, observations.nepochs)
+    mask = ones(FTYPE, observations.dim, observations.dim)
+    for n=1:observations.nsubaps
+        for t=1:observations.nepochs
+            for ~=1:10
+                backgrounds[:, :, n, t] .= fit_plane(observations.images[:, :, n, t], mask)
+                res = observations.images[:, :, n, t] .- backgrounds[:, :, n, t]
+                σ = std(res)
+                mask[res .> σ] .= FTYPE(0.0)
+            end
+            fill!(mask, FTYPE(1.0))
+        end
+    end
+
+    return Statistics.mean(dropdims(sum(backgrounds, dims=(1, 2)), dims=(1, 2)))
 end

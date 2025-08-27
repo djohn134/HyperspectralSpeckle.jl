@@ -2,6 +2,7 @@ using FITSIO
 
 
 mutable struct Masks{T<:AbstractFloat}
+    label::String
     masks::Array{T, 4}
     dim::Int64
     λ::Vector{T}
@@ -12,88 +13,119 @@ mutable struct Masks{T<:AbstractFloat}
     nsubaps_side::Int64
     scale_psfs::Vector{T}
     ix::Vector{Int64}
-    function Masks(;
-            maskfile="",
-            dim=256,
+    """
+        Masks(dim, λ; nsubaps_side=..., λ_nyquist=..., verb=..., FTYPE=...)
+
+    Create `Masks` struct. Mask arrays are created by [`HyperspeckleSpeckle.create_ish_masks`](@ref).
+
+    * `verb` can be specified to print information on the masks to the terminal
+    * `FTYPE` can be specified to change the Floating-point precision of the masks
+    """
+    function Masks(
+            dim, 
+            λ;
             nsubaps_side=1,
-            λ=[400.0],
-            λ_nyquist=400.0,
+            D_inner_frac=0.0,
+            λ_nyquist=minimum(λ),
+            label="",
+            verb=true,
             FTYPE=Float64
         )
-        if (maskfile != "")
-            masks, λ = readmasks(maskfile, FTYPE=FTYPE)
-            dim = size(masks, 1)
-        else
-            masks, ix = make_ish_masks(dim, nsubaps_side, λ, λ_nyquist=λ_nyquist, FTYPE=FTYPE)
-        end
-
+        masks_arr, ix = make_ish_masks(dim, nsubaps_side, λ, D_inner_frac=D_inner_frac, λ_nyquist=λ_nyquist, verb=false, FTYPE=FTYPE)
         nλ = length(λ)
         Δλ = (nλ == 1) ? 1.0 : (maximum(λ) - minimum(λ)) / (nλ - 1)
+<<<<<<< HEAD
+        nsubaps = size(masks_arr, 3)
+        scale_psfs = [FTYPE(1 / norm(masks_arr[:, :, 1, w], 2)) for w=1:nλ]
+        masks = new{FTYPE}(label, masks_arr, dim, λ, λ_nyquist, nλ, Δλ, nsubaps, nsubaps_side, scale_psfs, ix)
+        if verb == true
+            display(masks)
+        end
+        return masks
+=======
 
         nsubaps = size(masks, 3)
         # nsubaps_side = round(Int, sqrt(nsubaps))
         scale_psfs = [FTYPE(1 / norm(masks[:, :, 1, w], 2)) for w=1:nλ]
         new{FTYPE}(masks, dim, λ, λ_nyquist, nλ, Δλ, nsubaps, nsubaps_side, scale_psfs, ix)
+>>>>>>> main
     end
 end
 
-@views function make_simple_mask(dim, D, FTYPE=Float64)
+"""
+    mask = make_annular_mask(dim, D; D_inner=..., FTYPE=...)
+
+Create annular mask of outer diameter `D` and inner diameter `D_outer`
+in pixels, within an array of size `dim` by `dim`.
+
+* `FTYPE` can be specified to change the Floating-point precision of the mask
+"""
+@views function make_annular_mask(dim, D; D_inner=0.0, FTYPE=Float64)
     nn = dim÷2 + 1
     x = collect(1:dim) .- nn
     rr = hypot.(x, x')
     mask = zeros(FTYPE, dim, dim)
-    mask[rr .<= D/2] .= 1
+    mask[D_inner/2 .<= rr .<= D/2] .= 1
     return mask
 end
 
-@views function make_ish_masks(dim, nsubaps_side, λ::T; λ_nyquist=400.0, verb=true, FTYPE=Float64) where {T<:AbstractFloat}
+@views function make_ish_masks(dim, nsubaps_side, λ::T; D_inner_frac=0.0, λ_nyquist=minimum(λ), verb=true, FTYPE=Float64) where {T<:AbstractFloat}
     if verb == true
         println("Creating $(dim)×$(dim) mask for $(nsubaps_side)×$(nsubaps_side) subapertures at $(λ) nm")
     end
+    D_nyquist = dim ÷ 2
     rad_nyquist = dim ÷ 4
     scaleby_wavelength = λ_nyquist/λ
+    # nyquist_mask = zeros(FTYPE, dim, dim)
+    # nyquist_mask[rr .<= rad_nyquist] .= 1
+    nyquist_mask = make_annular_mask(dim, D_nyquist, D_inner=D_nyquist*D_inner_frac, FTYPE=FTYPE)
     
-    nn = dim÷2 + 1
-    x = collect(1:dim) .- nn
-    rr = hypot.(x, x')
-    nyquist_mask = zeros(FTYPE, dim, dim)
-    nyquist_mask[rr .<= rad_nyquist] .= 1
-    temp_mask = zeros(FTYPE, dim, dim)
-
     npix_subap = round(Int64, 2*rad_nyquist / nsubaps_side)
     subaperture_masks = zeros(FTYPE, dim, dim, nsubaps_side^2)
-    xstarts = round.(Int64, (nn-rad_nyquist).+[0:nsubaps_side-1;]*npix_subap.+1)
+    xstarts = round.(Int64, ((dim÷2+1) - rad_nyquist) .+ [0:nsubaps_side-1;] * npix_subap .+ 1)
     xends = xstarts .+ (npix_subap-1)
     xpos = [[xstarts[n], xends[n]] for n=1:nsubaps_side];
     subaperture_coords = hcat([i for i in xpos for j in xpos], [j for i in xpos for j in xpos]);
 
     kernel = LinearSpline(FTYPE)
     transform = AffineTransform2D{FTYPE}()
-
     image_size = (Int64(dim), Int64(dim))
+    mask_transform = ((transform+((dim÷2, dim÷2)))*(1/scaleby_wavelength)) - (dim÷2, dim÷2)
+    scale_mask = TwoDimensionalTransformInterpolator(image_size, image_size, kernel, mask_transform)
+    temp_mask = zeros(FTYPE, dim, dim)
     for n=1:nsubaps_side^2
         fill!(temp_mask, zero(FTYPE))
         xrange = subaperture_coords[n, 1][1]:subaperture_coords[n, 1][2]
         yrange = subaperture_coords[n, 2][1]:subaperture_coords[n, 2][2]        
         temp_mask[xrange, yrange] .= 1
         temp_mask .*= nyquist_mask
-
-        mask_transform = ((transform+((dim÷2, dim÷2)))*(1/scaleby_wavelength)) - (dim÷2, dim÷2)
-        scale_mask = TwoDimensionalTransformInterpolator(image_size, image_size, kernel, mask_transform)
         subaperture_masks[:, :, n] = scale_mask*temp_mask
     end
     
     return subaperture_masks
 end
 
-@views function make_ish_masks(dim, nsubaps_side, λ::Vector{<:AbstractFloat}; λ_nyquist=400.0, verb=true, FTYPE=Float64)
+"""
+    subaperture_masks, ix = maks_ish_masks(dim, nsubaps_side, λ; λ_nyquist=..., verb=..., FTYPE=...)
+
+Creates pupil masks of size `dim` by `dim` at wavelengths `λ`. If given `nsubaps_side`>1 it will create square
+pupil masks for a Shack-Hartmann wavefront sensor. Masks will be nyquist sampled at `λ_nyquist`, meaning the 
+pupil diameter will be exactly half the size of the array. Also returns the linear indices `ix` of an 
+`nsubaps_side` by `nsubaps_side` grid that removes corner subaps with little representation. For 6 by 6
+subaps, `ix` will start with indices 1:36 and then exclude 1, 6, 30, and 36.
+
+* `D_inner_frac` specifies the inner fractional diameter, relative to the outer diameter of the telescope, for an annular aperture
+* `verb` can be specified to print information on the masks to the terminal
+* `FTYPE` can be specified to change the Floating-point precision of the mask
+"""
+@views function make_ish_masks(dim, nsubaps_side, λ::Vector{<:AbstractFloat}; D_inner_frac=0.0, λ_nyquist=minimum(λ), verb=true, FTYPE=Float64)
     if verb == true
         println("Creating $(dim)×$(dim) mask for $(nsubaps_side)×$(nsubaps_side) subapertures between $(minimum(λ))—$(maximum(λ)) nm at $(length(λ)) wavelengths")
     end
     nλ = length(λ)
     subaperture_masks = Array{FTYPE, 4}(undef, dim, dim, nsubaps_side^2, nλ)
     Threads.@threads :static for w=1:nλ
-        subaperture_masks[:, :, :, w] .= make_ish_masks(dim, nsubaps_side, λ[w], λ_nyquist=λ_nyquist, verb=~verb, FTYPE=FTYPE)
+        subaperture_masks[:, :, :, w] .= make_ish_masks(dim, nsubaps_side, λ[w], D_inner_frac=D_inner_frac, λ_nyquist=λ_nyquist, verb=false, FTYPE=FTYPE)
     end
 
     subap_flux = (((dim÷2) * λ_nyquist/λ[1]) / nsubaps_side)^2

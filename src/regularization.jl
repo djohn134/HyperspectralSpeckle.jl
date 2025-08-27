@@ -21,13 +21,20 @@ mutable struct Regularizers{T<:AbstractFloat}
             verb=true,
             FTYPE=Float64
         )
+        regularizers = new{FTYPE}(o_reg, wf_reg, λ_reg, βo, βwf, βλ, βo_schedule, βwf_schedule, βλ_schedule)
         if verb == true
+<<<<<<< HEAD
+            display(regularizers)
+        end
+        return regularizers
+=======
             println("Object spatial regularizer: $(o_reg), β₀=$(βo) (schedule: $(βo_schedule))")
             println("Object wavelength regularizer: $(opd_reg), β₀=$(βopd) (schedule: $(βopd_schedule))")
             println("OPD spatial regularizer: $(λ_reg), β₀=$(βλ) (schedule: $(βλ_schedule))")
         end
 
         return new{FTYPE}(o_reg, opd_reg, λ_reg, βo, βopd, βλ, βo_schedule, βopd_schedule, βλ_schedule)
+>>>>>>> main
     end
 end
 

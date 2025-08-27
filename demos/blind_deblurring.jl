@@ -1,175 +1,179 @@
-include("../src/mfbd.jl");
-using Main.MFBD;
+include("../src/HyperspectralSpeckle.jl");
+using Main.HyperspectralSpeckle;
 using Statistics;
-using LuckyImaging;
-show_the_sausage()
+
 
 ############# Data Parameters #############
 FTYPE = Float32;
-folder = "/home/dan/Desktop/ApJL_2024/separations/recon/Delta_mag10";
+# folder = "/home/dan/Desktop/JASS_2024/tests";
+folder = "test"
+id = ""
 verb = true
 plot = true
 ###########################################
 
 ##### Size, Timestep, and Wavelengths #####
-image_dim = 256
-wfs_dim = 64
 nsubaps_side = 6
-nλ₀ = 1
+datafile_wfs = "$(folder)/Dr0_20_ISH$(nsubaps_side)x$(nsubaps_side)_images.fits"
+images_wfs, nsubaps, ~, wfs_dim, exptime_wfs, times_wfs = readimages(datafile_wfs, FTYPE=FTYPE)
+datafile_full = "$(folder)/Dr0_20_ISH1x1_images.fits"
+images_full, ~, ~, image_dim, exptime_full, times_full = readimages(datafile_full, FTYPE=FTYPE)
 nλ = 1
 nλint = 1
-λ_nyquist = 500.0
-λ_ref = 500.0
-λmin = 500.0
-λmax = 500.0
+λ_ref = 500.0e-9
+λmin = λ_nyquist = 500.0e-9
+λmax = 500.0e-9
 λ = (nλ == 1) ? [mean([λmax, λmin])] : collect(range(λmin, stop=λmax, length=nλ))
 λ₀ = (nλ₀ == 1) ? [mean([λmax, λmin])] : collect(range(λmin, stop=λmax, length=nλ₀))
 Δλ = (nλ == 1) ? 1.0 : (λmax - λmin) / (nλ - 1)
 ###########################################
-id = "_aniso"
 
 ########## Anisopatch Parameters ##########
-## Unused but sets the size of the layer ##
-isoplanatic = false
-patch_overlap = 0.5
+isoplanatic = true
 patch_dim = 64
 ###### Create Anisoplanatic Patches #######
-patches = AnisoplanaticPatches(patch_dim, image_dim, patch_overlap, isoplanatic=isoplanatic, FTYPE=FTYPE)
+patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FTYPE=FTYPE, verb=verb)
 ###########################################
 
 ### Detector & Observations Parameters ####
 D = 3.6  # m
-# fov = 256 / 5 * 2
-# fov = 256 / 78.5 * 20
-# fov = 20 * 256 / (132 * (256 / 512))
-fov = 20.0
-pixscale_full = fov / image_dim  # 0.25 .* ((λ .* 1e-9) .* 1e6) ./ D
-pixscale_wfs = pixscale_full * nsubaps_side
-qefile = "data/qe/prime-95b_qe.dat"
+D_inner_frac = 0.0
+fov = 10.0
+pixscale_full = fov / image_dim
+pixscale_wfs = pixscale_full .* nsubaps_side
+DTYPE = UInt16
+saturation = 30000.0  # e⁻
+gain = saturation / (typemax(DTYPE))  # e⁻ / ADU
+qefile = "../data/qe/prime-95b_qe.dat"
 ~, qe = readqe(qefile, λ=λ)
-# qe = ones(FTYPE, nλ)
-rn = 2.0
+rn = 1.0
 exptime = 5e-3
 ζ = 0.0
-######### Create Detector object ##########
-filter = Filter(filtername="Bessell:V", FTYPE=FTYPE)
+########## Create Optical System ##########
+filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
+beamsplitter = OpticalElement(λ=[400.0e-9, 1000.0e-9], response=[0.5, 0.5], FTYPE=FTYPE)
+optics_full = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
+######### Create Full-Ap Detector #########
 detector_full = Detector(
     qe=qe,
     rn=rn,
+    gain=gain,
     pixscale=pixscale_full,
     λ=λ,
     λ_nyquist=λ_nyquist,
-    exptime=exptime,
-    filter=filter,
+    exptime=exptime_full,
+    verb=verb,
+    label="Full Aperture",
     FTYPE=FTYPE
 )
 ### Create Full-Ap Observations object ####
-datafile = "$(folder)/Dr0_20_ISH1x1_images.fits"
+ϕ_static_full = zeros(FTYPE, image_dim, image_dim, nλ)
 observations_full = Observations(
+    times_full,
+    images_full,
+    optics_full,
     detector_full,
     ζ=ζ,
     D=D,
-    α=0.5,
-    datafile=datafile,
+    D_inner_frac=D_inner_frac,
+    ϕ_static=ϕ_static_full,
+    verb=verb,
+    label="Full Aperture",
     FTYPE=FTYPE
 )
 ##### Create WFS Observations object ######
 detector_wfs = Detector(
     qe=qe,
     rn=rn,
+    gain=gain,
     pixscale=pixscale_wfs,
     λ=λ,
     λ_nyquist=λ_nyquist,
-    exptime=exptime,
-    filter=filter,
+    exptime=exptime_wfs,
+    verb=verb,
+    label="Wavefront Sensor",
     FTYPE=FTYPE
 )
 datafile = "$(folder)/Dr0_20_ISH6x6_images.fits"
 observations_wfs = Observations(
+    times_wfs,
+    images_wfs,
+    optics_wfs,
     detector_wfs,
     ζ=ζ,
     D=D,
-    α=0.5,
-    datafile=datafile,
+    D_inner_frac=D_inner_frac,
+    nsubaps_side=nsubaps_side,
+    ϕ_static=ϕ_static_wfs,
+    build_dim=observations_full.dim,
+    verb=verb,
+    label="Wavefront Sensor",
     FTYPE=FTYPE
 )
-# observations = [observations_wfs, observations_full]
-observations = [observations_full]
+nsubaps = observations_wfs.masks.nsubaps
+observations_wfs.masks.scale_psfs = observations_full.masks.scale_psfs
+observations = [observations_wfs, observations_full]
+background = 0 # mean(fit_background(observations_full))
 ###########################################
 
-########### Load Full-Ap Masks ############
-masks_full = Masks(
-    dim=observations_full.dim,
-    nsubaps_side=1, 
-    λ=λ, 
-    λ_nyquist=λ_nyquist, 
-    FTYPE=FTYPE
-)
-############ Create WFS Masks #############
-masks_wfs = Masks(
-    dim=observations_full.dim,
-    nsubaps_side=nsubaps_side, 
-    λ=λ, 
-    λ_nyquist=λ_nyquist, 
-    FTYPE=FTYPE
-)
-nsubaps = masks_wfs.nsubaps
-masks_wfs.scale_psfs = masks_full.scale_psfs
-# masks = [masks_wfs, masks_full]
-masks = [masks_full]
-###########################################
 
 ############ Object Parameters ############
-object_height = Inf# 1.434e6  # km
+object_range = 500.0e3  # km
 ############## Create object ##############
+object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background/observations_full.dim^2, 0)
+object_arr = repeat(object_arr, 1, 1, nλ)
+object_arr ./= sum(object_arr)
+object_arr .*= (mean(sum(observations_full.images, dims=(1, 2, 3))) - background)
+# object_arr = readfits("$(folder)/object_truth_spectral.fits")
+~, spectrum = solar_spectrum(λ=λ)
 object = Object(
+    object_arr,
     λ=λ,
-    height=object_height, 
+    nλint=nλint,
+    object_range=object_range, 
     fov=fov,
     dim=observations_full.dim,
-    FTYPE=FTYPE
+    background=background,
+    spectrum=spectrum,
+    scaled=true,
+    FTYPE=FTYPE,
+    verb=verb
 )
-
-# all_subap_images = block_replicate(dropdims(sum(observations_wfs.images, dims=(3, 4)), dims=(3, 4)), image_dim) .+ dropdims(sum(observations_full.images, dims=(3, 4)), dims=(3, 4))
-# all_subap_images = lucky_image(observations_full.images[:, :, 1, :], dims=3, q=0.9)
-# object.object = repeat(all_subap_images, 1, 1, nλ)
-# object.object ./= sum(object.object)
-# object.object .*= 2 * mean(sum(observations_full.images, dims=(1, 2, 3)))
-# object.object .-= mean(object.object)
-object.object = readfits("$(folder)/object_recon_aniso.fits")
-# object.object = readfits("$(folder)/object_truth_2arcsec.fits")
 ###########################################
 
 ########## Atmosphere Parameters ##########
-heights = [0.0, 7.0, 12.5]
+heights = [0.0, 7000.0, 12500.0]
 wind_speed = wind_profile_roberts2011(heights, ζ)
 # heights .*= 0.0
-heights .= [0.0, 5.0, 10.0]
 wind_direction = [45.0, 125.0, 135.0]
 wind = [wind_speed wind_direction]
 nlayers = length(heights)
-scaleby_wavelength = λ_nyquist ./ λ
 sampling_nyquist_mperpix = layer_nyquist_sampling_mperpix(D, image_dim, nlayers)
 sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heights, image_dim)
+~, transmission = readtransmission("/home/dan/Desktop/HyperspectralSpeckle.jl/data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
 ############ Create Atmosphere ############
 atmosphere = Atmosphere(
+    λ,
+    observations, 
+    object, 
+    patches,
     wind=wind, 
-    heights=heights, 
+    heights=heights,
+    transmission=transmission,
     sampling_nyquist_mperpix=sampling_nyquist_mperpix,
     sampling_nyquist_arcsecperpix=sampling_nyquist_arcsecperpix,
-    λ=λ,
     λ_nyquist=λ_nyquist,
     λ_ref=λ_ref,
-    FTYPE=FTYPE
+    create_screens=false,
+    FTYPE=FTYPE,
+    verb=verb
 )
-########## Create phase screens ###########
-calculate_screen_size!(atmosphere, observations_full, object, patches)
-calculate_pupil_positions!(atmosphere, observations_full)
-calculate_layer_masks_eff!(patches, atmosphere, observations_full, object, masks_full)
-# atmosphere.opd = zeros(FTYPE, size(atmosphere.masks)[1:3])
-atmosphere.opd = readfits("$(folder)/opd_recon_aniso.fits")
-# atmosphere.opd = readfits("$(folder)/Dr0_20_opd_full_2arcsec.fits")
+######### Set phase screens start #########
+atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
+# atmosphere.phase = readfits("test/Dr0_20_phase_full.fits")
 ###########################################
+object.object .*= observations_full.detector.gain / (observations_full.detector.exptime * observations_full.aperture_area * mean(observations_full.optics.response) * mean(atmosphere.transmission))
+object.background *= observations_full.detector.gain / (observations_full.detector.exptime * observations_full.aperture_area * mean(observations_full.optics.response) * mean(atmosphere.transmission))
 
 ######### Reconstruction Object ###########
 reconstruction = Reconstruction(
@@ -184,23 +188,19 @@ reconstruction = Reconstruction(
     niter_mfbd=100,
     maxiter=30,
     # indx_boot=[1:2],
-    weight_function=mixed_weighting,
-    gradient_object=gradient_object_mixednoise!,
-    gradient_opd=gradient_opd_mixednoise!,
-    maxeval=Dict("opd"=>1000, "object"=>1000),
-    smoothing=false,
-    # minFWHM=0.5,
-    # maxFWHM=0.5,
-    # fwhm_schedule=ReciprocalSchedule(5.0, 0.5),
+    wavefront_parameter=:phase,
+    frozen_flow=true,
+    minimization_scheme=:mle,
+    noise_model=:gaussian,
+    maxeval=Dict("wf"=>100, "object"=>100),
+    smoothing=true,
     # fwhm_schedule=ConstantSchedule(0.5),
-    grtol=0.0,
-    xrtol=0.0,
     build_dim=image_dim,
     verb=verb,
     plot=plot,
     FTYPE=FTYPE
 );
-reconstruct_blind!(reconstruction, observations, atmosphere, object, masks, patches, write=true, folder=folder, id=id)
+reconstruct!(reconstruction, observations, atmosphere, object, patches, write=true, folder=folder, id=id)
 ###########################################
 
 # calculate_composite_pupil_eff(patches, atmosphere, observations, object, masks, build_dim=image_dim, propagate=false)
@@ -208,12 +208,3 @@ reconstruct_blind!(reconstruction, observations, atmosphere, object, masks, patc
 # writefits(patches.ϕ_composite, "$(folder)/phase_recon_composite$(id).fits")
 # writefits(atmosphere.masks, "$(folder)/layer_masks$(id).fits")
 # writefits(atmosphere.opd, "$(folder)/opd_recon_planesubtracted$(id).fits")
-
-###########################################
-## Write isoplanatic phases and images ####
-# writefits(observations_full.model_images, "$(folder)/models_ISH1x1_recon$(id).fits")
-# writefits(observations_wfs.model_images, "$(folder)/models_ISH6x6_recon$(id).fits")
-# writefits(object.object, "$(folder)/object_recon$(id).fits")
-# writefits(atmosphere.opd, "$(folder)/opd_recon_planesubtracted$(id).fits")
-# writefile([reconstruction.ϵ], "$(folder)/recon$(id).dat")
-###########################################
