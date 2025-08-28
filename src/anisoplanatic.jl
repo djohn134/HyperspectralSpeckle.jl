@@ -104,15 +104,12 @@ end
     original_heights = atmosphere.heights
     original_dim = atmosphere.dim
     original_sampling_nyquist_arcsecperpix = atmosphere.sampling_nyquist_arcsecperpix
-    # Dmeta0 = observations_full.D .+ (object.fov/206265) .* (original_heights .* 1000) 
-    # Dmeta = observations_full.D .+ (object.fov/206265) .* (heights .* 1000)
     atmosphere.heights = heights
     atmosphere.sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(observations[1].D, object.fov, heights, object.dim)
 
     calculate_atmosphere_parameters!(atmosphere, observations, object, patches, verb=false)
     ϕ = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
 
-    # scaleby_height = Dmeta ./ Dmeta0
     scaleby_height = original_sampling_nyquist_arcsecperpix ./ atmosphere.sampling_nyquist_arcsecperpix
     kernel = LinearSpline(FTYPE)
     transform = AffineTransform2D{FTYPE}()

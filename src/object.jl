@@ -27,54 +27,19 @@ mutable struct Object{T<:AbstractFloat}
             fov=0,
             object_range=0,
             spectrum=[0],
-<<<<<<< HEAD
             scaled=false,
-=======
-            qe=[0],
-            objectfile="",
-            template=false, 
->>>>>>> main
             FTYPE=Float64,
             verb=true
         )
-        if verb == true
-            println("Creating $(dim)×$(dim) object at height $(height) km with $(fov)×$(fov) arcsec field of view")
-        end
         nλ = length(λ)
         Δλ = (nλ == 1) ? 1.0 : (maximum(λ) - minimum(λ)) / (nλ - 1)
         sampling_arcsecperpix = fov / dim
-<<<<<<< HEAD
         if scaled == false
             for w=1:nλ
                 object_arr[:, :, w] .*= spectrum[w]
             end
             object_arr ./= sum(object_arr)
             object_arr .*= irradiance / Δλ
-=======
-        if (template == true) && (objectfile != "")
-            object, ~ = template2object(objectfile, dim, λ, FTYPE=FTYPE)
-            for w=1:nλ
-                object[:, :, w] .*= spectrum[w] * qe[w]
-            end
-            object ./= sum(object)
-            # object .*= flux * (4445.01 / 1058.2726) / Δλ
-            object .*= flux / Δλ
-            return new{FTYPE}(λ, nλ, height, fov, sampling_arcsecperpix, spectrum, flux, background_flux, object)
-        elseif (template == false) && (objectfile != "")
-            object = block_reduce(readfits(objectfile, FTYPE=FTYPE), dim)
-            if (length(size(object)) == 2) && (nλ == 1)
-                object = repeat(object, 1, 1, 1)
-            end
-
-            for w=1:nλ
-                object[:, :, w] .*= spectrum[w] * qe[w]
-            end
-            object ./= sum(object)
-            object .*= flux / Δλ
-            return new{FTYPE}(λ, nλ, height, fov, sampling_arcsecperpix, spectrum, flux, background_flux, object)
-        else
-            return new{FTYPE}(λ, nλ, height, fov, sampling_arcsecperpix, spectrum)
->>>>>>> main
         end
         object = new{FTYPE}(dim, λ, nλ, nλint, Δλ, object_range, fov, sampling_arcsecperpix, spectrum, irradiance, background, object_arr)
         if verb == true
@@ -84,7 +49,6 @@ mutable struct Object{T<:AbstractFloat}
     end
 end
 
-<<<<<<< HEAD
 function mag2flux(mag, filter; ζ=0.0)
     ## Flux at top of atmosphere
     airmass = secd(ζ)
@@ -93,66 +57,6 @@ function mag2flux(mag, filter; ζ=0.0)
     irradiance_target = irradiance_vega * 10^(-(mag + 0.3*airmass) / 2.5)  # ph/s/m^2
     # return radiant_energy_target
     return irradiance_target
-=======
-function mag2flux(mag; D=3.6, ζ=0.0, exptime=20e-3, qe=0.7, adc_gain = 1.0, filter="V")
-    area = pi*(D/2)^2
-    airmass = sec(ζ*pi/180)
-    nphotons, extinct_coeff = magnitude_zeropoint(filter=filter);
-    # calculate number of ADU counts on the CCD from star, total
-    adu = adc_gain * qe * exptime * area * 10.0^(-0.4*mag) * nphotons * 10^(-0.4*airmass*extinct_coeff);
-    return adu 
-end
-
-function mag2flux(λ, spectrum, mag, detector; D=3.6, ζ=0.0, exptime=20e-3, adc_gain=1.0)
-    area = pi*(D/2)^2
-    airmass = sec(ζ*pi/180)
-    λfilter, filter_response = detector.filter.λ, detector.filter.response
-    nphotons_vega = magnitude_zeropoint(λfilter, filter_response);
-    nphotons = nphotons_vega * 10^(-(mag+0.3*airmass)/2.5)
-    scaled_spectrum = (spectrum ./ sum(spectrum)) .* nphotons
-    # calculate number of ADU counts on the CCD from star, per wavelength
-    adu_λ = (adc_gain * exptime * area) .* detector.qe .* scaled_spectrum
-    # calculate number of ADU counts on the CCD from star, total
-    adu = length(λ) > 1 ? NumericalIntegration.integrate(λ, adu_λ) : adu_λ[1]
-    return adu 
-end
-
-function magnitude_zeropoint(; filter="none")
-# Photons per square meter per second produced by a 0th mag star above the atmosphere.
-# Assuming spectrum like Vega
-    nphot = -1.0;
-    coeff = 1.0; # extinction
-    if (filter == "none") 
-        nphot = 4.32e+10;
-        coeff = 0.20;
-    elseif (filter == "U")
-        nphot = 5.50e+9;
-        coeff = 0.60;
-    elseif (filter == "B")
-        nphot = 3.91e+9;
-        coeff = 0.40;
-    elseif (filter == "V")
-        nphot = 8.66e+9;
-        coeff = 0.20;
-    elseif (filter == "R")
-        nphot = 1.10e+10;
-        coeff = 0.10;
-    elseif (filter == "I")
-        nphot = 6.75e+9;
-        coeff = 0.08;
-    end
-    return nphot, coeff;
-end
-
-function magnitude_zeropoint(λmin, λmax, λfilter, filter_response)
-    # Photons per square meter per second produced by a 0th mag star above the atmosphere.
-    # Assuming spectrum like Vega
-    λ = range(λmin, stop=λmax, length=101)
-    λ, flux = vega_spectrum(λ=λ)
-    filter_itp = interpolate((λfilter,), filter_response, Gridded(Linear()))
-    nphot = NumericalIntegration.integrate(λ, flux .* filter_itp(λ))
-    return nphot
->>>>>>> main
 end
 
 function magnitude_zeropoint(λfilter, filter_response)

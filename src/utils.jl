@@ -3,6 +3,7 @@ using FFTW
 using FITSIO
 using Statistics
 using DelimitedFiles
+using ZernikePolynomials
 import Interpolations: LinearInterpolation, Line
 FFTW.set_provider!("fftw")
 FFTW.set_num_threads(1)
@@ -96,7 +97,6 @@ function gettype(T)
     return gettypes(T)[1]
 end
 
-<<<<<<< HEAD
 function gettypes(T)
     return typeof(T).parameters
 end
@@ -135,12 +135,6 @@ function writefits(x, filename; verb=true, header=nothing, times=nothing)
         if !isnothing(times)
             write(f, times)
         end
-=======
-function writefits(x, filename; verb=true, header=nothing)
-    f = FITS(filename, "w")
-    if header !== nothing
-        header = FITSHeader(header...)
->>>>>>> main
     end
     
     if verb == true
@@ -402,41 +396,15 @@ function super_gaussian(dim, σ, n; FTYPE=Float64)
 end
 
 function vega_spectrum(; λ=[])
-<<<<<<< HEAD
     file = "$(@__DIR__)/../data/alpha_lyr_stis_011.fits"
     λ₀, spectral_irradiance = readspectrum(file)  # erg/s/cm^2/Å
     λ₀ .*= 1e-10  # convert Å to m
     spectral_irradiance .*= 1e-7  # convert erg/s to W [W/cm^2/Å]
     spectral_irradiance .*= 1e4  # convert cm^2 to m^2 [W/m^2/Å]
     spectral_irradiance .*= 1e10  # convert Å to m [W/m^2/m]
-=======
-    file = "data/alpha_lyr_stis_011.fits"
-    λ, flux = read_spectrum(file, λ=λ)
-    return λ, flux
-end
-
-function solar_spectrum(; λ=[])
-    file = "data/sun_reference_stis_002.fits"
-    λ, flux = read_spectrum(file, λ=λ)
-    return λ, flux
-end
-
-function read_spectrum(file; λ=[])
-    h = 6.626196e-27  # erg⋅s
-    c = 2.997924562e17  # nm/s
-
-    λ₀ = read(FITS(file)[2], "WAVELENGTH")  # Å
-    λ₀ ./= 10  # convert to nm
-    flux = read(FITS(file)[2], "FLUX")  # erg/s/cm^2/Å
-    flux ./= h*c ./ λ₀  # convert erg/s to ph/s [ph/s/cm^2/Å]
-    flux .*= 1e4  # convert cm^2 to m^2 [ph/s/m^2/Å]
-    flux .*= 10  # convert Å to nm [ph/s/m^2/nm]
-
->>>>>>> main
     if λ == []
-        return λ₀, flux
+        λ = λ₀
     else
-<<<<<<< HEAD
         spectral_irradiance = interpolate1d(λ₀, spectral_irradiance, λ)
     end
     return λ, spectral_irradiance
@@ -469,12 +437,6 @@ end
 
 function ift(x)
     return fftshift(ifft(ifftshift(x)))
-=======
-        itp = interpolate((λ₀,), flux, Gridded(Linear()))
-        flux = itp(λ)
-        return λ, flux
-    end
->>>>>>> main
 end
 
 function fourier_filter(x, r; FTYPE=Float64)
@@ -539,7 +501,6 @@ function setup_ifft(::Type{T}, dim) where {T}
     return ifft!, container
 end
 
-<<<<<<< HEAD
 function setup_autocorr(::Type{T}, dim) where {T<:Real}
     container = Matrix{Complex{T}}(undef, dim, dim)
     ft1, ~ = setup_fft(Complex{T}, dim)
@@ -563,48 +524,6 @@ function setup_autocorr(::Type{T}, dim) where {T<:Complex}
         container1 .= abs2.(container2)
         ft1(container2, container1)
         out .= container2
-=======
-function setup_conv(dim; FTYPE=Float64)
-    ft1 = setup_fft(dim, FTYPE=FTYPE)
-    ft2 = setup_fft(dim, FTYPE=FTYPE)
-    ift1 = setup_ifft(dim, FTYPE=FTYPE)
-    container1 = Matrix{Complex{FTYPE}}(undef, dim, dim)
-    container2 = Matrix{Complex{FTYPE}}(undef, dim, dim)
-    container3 = Matrix{Complex{FTYPE}}(undef, dim, dim)
-    function conv!(out, in1, in2)
-        ft1(container1, in1)
-        ft2(container2, in2)
-        container3 .= container1 .* container2
-        ift1(out, container3)
-    end
-
-    return conv!
-end
-
-function setup_corr(dim; FTYPE=Float64)
-    ft1 = setup_fft(dim, FTYPE=FTYPE)
-    ft2 = setup_fft(dim, FTYPE=FTYPE)
-    ift1 = setup_ifft(dim, FTYPE=FTYPE)
-    container1 = Matrix{Complex{FTYPE}}(undef, dim, dim)
-    container2 = Matrix{Complex{FTYPE}}(undef, dim, dim)
-    container3 = Matrix{Complex{FTYPE}}(undef, dim, dim)
-    function corr!(out, in1, in2)
-        ft1(container1, in1)
-        ft2(container2, in2)
-        container3 .= container1 .* conj.(container2)
-        ift1(out, container3)
-    end
-
-    return corr!
-end
-
-function setup_autocorr(dim; FTYPE=Float64)
-    ift1 = setup_ifft(dim, FTYPE=FTYPE)
-    container = Matrix{Complex{FTYPE}}(undef, dim, dim)
-    function autocorr!(out, in)
-        ift1(container, in)
-        out .= abs2.(container)
->>>>>>> main
     end
 
     return autocorr!
@@ -657,11 +576,7 @@ end
     return mosaic
 end
 
-<<<<<<< HEAD
 @views function stack2mosaic(stack::AbstractArray{<:Number, 3}, nside, ix)
-=======
-function stack2mosaic(stack::AbstractArray{<:AbstractFloat, 3}, nside, ix)
->>>>>>> main
     ## 3d stack of images to 2d mosaic image
     FTYPE = eltype(stack)
     dim = size(stack, 1)
@@ -682,7 +597,6 @@ function stack2mosaic(stack::AbstractArray{<:AbstractFloat, 3}, nside, ix)
 
     return mosaic
 end
-<<<<<<< HEAD
 
 function create_zernike_screen(dim, radius, index, waves; FTYPE=Float64)
     x = collect(-dim÷2:dim÷2-1) ./ radius
@@ -743,5 +657,3 @@ end
 function ones!(A::AbstractArray{T}) where {T<:Number}
     fill!(A, one(eltype(A)))
 end
-=======
->>>>>>> main

@@ -1,4 +1,5 @@
 using FITSIO
+using Crayons
 
 
 mutable struct Masks{T<:AbstractFloat}
@@ -9,7 +10,7 @@ mutable struct Masks{T<:AbstractFloat}
     λ_nyquist::T
     nλ::Int64
     Δλ::T
-    nsubaps::Int64
+    nsubaps::Int64    
     nsubaps_side::Int64
     scale_psfs::Vector{T}
     ix::Vector{Int64}
@@ -34,7 +35,6 @@ mutable struct Masks{T<:AbstractFloat}
         masks_arr, ix = make_ish_masks(dim, nsubaps_side, λ, D_inner_frac=D_inner_frac, λ_nyquist=λ_nyquist, verb=false, FTYPE=FTYPE)
         nλ = length(λ)
         Δλ = (nλ == 1) ? 1.0 : (maximum(λ) - minimum(λ)) / (nλ - 1)
-<<<<<<< HEAD
         nsubaps = size(masks_arr, 3)
         scale_psfs = [FTYPE(1 / norm(masks_arr[:, :, 1, w], 2)) for w=1:nλ]
         masks = new{FTYPE}(label, masks_arr, dim, λ, λ_nyquist, nλ, Δλ, nsubaps, nsubaps_side, scale_psfs, ix)
@@ -42,13 +42,6 @@ mutable struct Masks{T<:AbstractFloat}
             display(masks)
         end
         return masks
-=======
-
-        nsubaps = size(masks, 3)
-        # nsubaps_side = round(Int, sqrt(nsubaps))
-        scale_psfs = [FTYPE(1 / norm(masks[:, :, 1, w], 2)) for w=1:nλ]
-        new{FTYPE}(masks, dim, λ, λ_nyquist, nλ, Δλ, nsubaps, nsubaps_side, scale_psfs, ix)
->>>>>>> main
     end
 end
 
@@ -71,7 +64,10 @@ end
 
 @views function make_ish_masks(dim, nsubaps_side, λ::T; D_inner_frac=0.0, λ_nyquist=minimum(λ), verb=true, FTYPE=Float64) where {T<:AbstractFloat}
     if verb == true
-        println("Creating $(dim)×$(dim) mask for $(nsubaps_side)×$(nsubaps_side) subapertures at $(λ) nm")
+        print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Mask\n"); print(Crayon(reset=true))
+        println("\tSize: $(dim)×$(dim) pixels")
+        println("\tConfiguration: $(nsubaps_side)×$(nsubaps_side) subapertures")
+        println("\tWavelength: $(λ) nm")
     end
     D_nyquist = dim ÷ 2
     rad_nyquist = dim ÷ 4
@@ -120,7 +116,11 @@ subaps, `ix` will start with indices 1:36 and then exclude 1, 6, 30, and 36.
 """
 @views function make_ish_masks(dim, nsubaps_side, λ::Vector{<:AbstractFloat}; D_inner_frac=0.0, λ_nyquist=minimum(λ), verb=true, FTYPE=Float64)
     if verb == true
-        println("Creating $(dim)×$(dim) mask for $(nsubaps_side)×$(nsubaps_side) subapertures between $(minimum(λ))—$(maximum(λ)) nm at $(length(λ)) wavelengths")
+        print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Masks\n"); print(Crayon(reset=true))
+        println("\tSize: $(dim)×$(dim) pixels")
+        println("\tConfiguration: $(nsubaps_side)×$(nsubaps_side) subapertures")
+        println("\tWavelength: $(minimum(λ))—$(maximum(λ)) nm")
+        println("\tNumber of wavelengths: $(length(λ)) wavelengths")
     end
     nλ = length(λ)
     subaperture_masks = Array{FTYPE, 4}(undef, dim, dim, nsubaps_side^2, nλ)
