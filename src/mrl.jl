@@ -274,54 +274,29 @@ end
         end
     end
 
-    ϵ = sum(helpers.ϵ_threads)
+    ϵ = FTYPE(sum(helpers.ϵ_threads))
     for tid=1:Threads.nthreads()
-        g .+= helpers.g_threads_ϕ[:, :, :, :, tid]
+        g .+= helpers.g_threads_obj[:, :, 1, tid]
     end
 
-    # Apply regularization
-    for l=1:atmosphere.nlayers
-        for w₁=1:reconstruction.nλ
-            for w₂=1:reconstruction.nλint 
-                w = (w₁-1)*reconstruction.nλint + w₂
-                ϵ += regularizers.wf_reg(x[:, :, l, w], g[:, :, l, w], regularizers.βwf)
-            end
-        end
-    end
+    ϵ += regularizers.o_reg(x, g, regularizers.βo)
+    ϵ += regularizers.λ_reg(x, g, regularizers.βλ)
+    # o_obs[] = rotr90(g[:, :, end])
 
-    reconstruction.ϵ = ϵ
     return ϵ
 end
 
-@views function gradient_phase_mrl_gaussiannoise!(g, r, ω, P, p, c, d, d2, λ, Δλ, nλ, nλint, response, transmission, nlayers, o_corr, entropy, npatches, smoothing, k_corr, refraction_adj, extractor_adj, mask_acf, ifft!, autocorr!, corr!, container_pdim_real, container_pdim_cplx, container_builddim_real, container_sdim_real)
-    FTYPE = eltype(r)
-    autocorr!(container_pdim_real, r)
-    corr!(container_pdim_cplx, r, container_pdim_real)
-    container_pdim_real .= ω .* mask_acf .* real.(container_pdim_cplx)
-    block_replicate!(c, container_pdim_real)
-    conj!(p)
+@views function gradient_object_mrl!(g::AbstractMatrix{<:AbstractFloat}, r, ω, image_big, psfs, patch_weights, npatches, Δλ, nλ, M, container_pdim_cplx, container_pdim_real, ifft_prealloc, autocorr)
+    autocorr(container_pdim_real, r)
+    ifft_prealloc(container_pdim_cplx, r)
+    conj!(container_pdim_cplx)
+    container_pdim_cplx .*= container_pdim_real
+    ifft_prealloc(container_pdim_cplx, container_pdim_cplx)
+    container_pdim_real .= 4 .* M .* ω .* real.(container_pdim_cplx)
+    block_replicate!(image_big, container_pdim_real)
     for np=1:npatches
-        for w₁=1:nλ
-            d2 .= o_corr[w₁, np](c)  # <--
-            for w₂=1:nλint
-                w = (w₁-1)*nλint + w₂
-                container_builddim_real .= d2
-                mul!(d2, refraction_adj[w], container_builddim_real)
-
-                p[:, :, np, w] .*= d2
-                ifft!(d, p[:, :, np, w])
-                d .*= P[:, :, np, w]
-                d2 .= imag.(d)
-                d2 .*= -8 * response[w] * transmission[w]
-                if smoothing == true
-                    d2 .= k_corr(d2)
-                end
-
-                for l=1:nlayers
-                    mul!(container_sdim_real, extractor_adj[np, l, w], d2)
-                    g[:, :, l, w] .+= container_sdim_real
-                end
-            end
+        for w=1:nλ
+            g .+= Δλ .* patch_weights[:, :, np] .* ccorr_psf(image_big, psfs[:, :, np, w])
         end
     end
 end

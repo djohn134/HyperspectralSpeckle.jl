@@ -15,6 +15,7 @@ plot = true
 ##### Size, Timestep, and Wavelengths #####
 image_dim = 256
 wfs_dim = 64
+wfs_dim = 64
 nsubaps_side = 6
 nλ = 1
 nλint = 1
@@ -27,6 +28,7 @@ resolution = mean(λ) / Δλ
 ###########################################
 
 ########## Anisopatch Parameters ##########
+## Unused but sets the size of the layer ##
 ## Unused but sets the size of the layer ##
 isoplanatic = false
 patch_overlap = 0.5
@@ -43,6 +45,7 @@ pixscale_wfs = pixscale_full .* nsubaps_side
 qefile = "data/qe/prime-95b_qe.dat"
 ~, qe = readqe(qefile, λ=λ)
 # qe = ones(FTYPE, nλ)
+rn = 2.0
 rn = 2.0
 exptime = 5e-3
 ζ = 0.0
@@ -162,6 +165,7 @@ object = Object(
 heights = [0.0, 7000.0, 12500.0]
 wind_speed = wind_profile_roberts2011(heights, ζ)
 heights .*= 0.0
+heights .*= 0.0
 wind_direction = [45.0, 125.0, 135.0]
 wind = [wind_speed wind_direction]
 nlayers = length(heights)
@@ -198,6 +202,10 @@ reconstruction = Reconstruction(
     observations,
     object,
     patches,
+    λmin=λmin,
+    λmax=λmax,
+    nλ=nλ,
+    nλint=nλint,
     λmin=λmin,
     λmax=λmax,
     nλ=nλ,

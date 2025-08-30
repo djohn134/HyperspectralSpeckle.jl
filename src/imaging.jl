@@ -235,15 +235,20 @@ end
     if !isnothing(buffers.smooth)
         convolve!(buffers.ϕ_composite, buffers.smooth, buffers.ϕ_composite)
     end
-    buffers.ϕ_composite .+= observations.phase_static[:, :, ixs.w]
-    
+    if !isempty(observations.phase_static)
+        buffers.ϕ_composite .+= observations.phase_static[:, :, ixs.w]
+    end
+    if !isnothing(observations.diversity)
+        buffers.ϕ_composite .+= observations.diversity.phase[:, :, ixs.w] .* observations.diversity.schedule(observations.times[ixs.t])
+    end
+
     pupil2psf!(buffers.psf[:, :, ixs.np, ixs.w], buffers.psf_temp, observations.masks.masks[:, :, ixs.n, ixs.w], buffers.P[:, :, ixs.np, ixs.w], buffers.p[:, :, ixs.np, ixs.w], buffers.A, buffers.ϕ_composite, observations.masks.scale_psfs[ixs.w], buffers.iffts, refraction[ixs.w])
     buffers.psf[:, :, ixs.np, ixs.w] ./= object.nλint
 
     buffers.object_patch .= patches.w[:, :, ixs.np] .* object.object[:, :, ixs.w]
     convolve!(buffers.image_big, buffers.conv_plan, buffers.object_patch, buffers.psf[:, :, ixs.np, ixs.w])
-    block_reduce!(buffers.image_small, buffers.image_big)
 
+    block_reduce!(buffers.image_small, buffers.image_big)
     buffers.image_small .+= object.background / (atmosphere.Δλ * atmosphere.nλ * object.nλint * patches.npatches)
     buffers.image_small .*= observations.optics.response[ixs.w] * atmosphere.transmission[ixs.w]
 end

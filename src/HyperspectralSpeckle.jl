@@ -28,9 +28,14 @@ export AnisoplanaticPatches
 export get_center, get_center!, create_patch_extractors, create_patch_extractors_adjoint
 export change_heights!
 
+## diversity
+include("diversity.jl")
+export Diversity
+export create_zernike_screen, create_diversity_phase!
+
 ## observations
 include("observations.jl")
-export OpticalElement, OpticalSystem, Detector, Observations
+export Filter, OpticalElement, OpticalSystem, Detector, Observations
 export calculate_wfs_slopes
 
 ## object
@@ -72,7 +77,7 @@ export update_object_figure, update_layer_figure, update_opd_figure, update_phas
 ## utils
 include("utils.jl")
 export gettype, create_header, writefits, writefile, writeobject, readobject, readfile, readqe, readimages, readmasks, readfits, readspectrum, readtransmission, vega_spectrum, solar_spectrum
-export gaussian_kernel, calculate_entropy, calculate_ssim, shift_and_add, fit_plane, crop, smooth_to_rmse!, bartlett_hann2d, super_gaussian, block_reduce!, block_reduce, block_replicate!, block_replicate, stack2mosaic, create_zernike_screen, smooth_to_resolution, interpolate1d, center_of_gravity
+export gaussian_kernel, calculate_entropy, calculate_ssim, shift_and_add, fit_plane, crop, smooth_to_rmse!, bartlett_hann2d, super_gaussian, block_reduce!, block_reduce, block_replicate!, block_replicate, stack2mosaic, smooth_to_resolution, interpolate1d, center_of_gravity
 export zeros!, ones!, ft, ift, setup_fft, setup_ifft, ConvolutionPlan, Preconvolution, convolve!, CorrelationPlan, Precorrelate, correlate!, setup_autocorr, setup_operator_mul
 
 ## reconstruct

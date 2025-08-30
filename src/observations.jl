@@ -24,6 +24,7 @@ const ELEMENT_FILENAMES = Dict(
     "Thorlabs:DMLP805P-reflected"=>"$(OPTICS_DIR)/DMLP805-reflected.dat",
 )
 
+
 struct OpticalElement{T<:AbstractFloat}
     name::String
     λ::Vector{T}
@@ -132,6 +133,7 @@ mutable struct Observations{T<:AbstractFloat, S<:Real}
     masks::Masks{T}
     optics::OpticalSystem{T}
     phase_static::Array{T, 3}
+    diversity::Union{Diversity{T}, Nothing}
     detector::Detector{T, S}
     ζ::T
     D::T
@@ -161,11 +163,13 @@ mutable struct Observations{T<:AbstractFloat, S<:Real}
             nsubaps_side=1,
             dim=0,
             ϕ_static=[;;;],
+            diversity=nothing,
             build_dim=dim,
             label="",
             verb=true,
             FTYPE=Float64
         )
+
         masks = Masks(
             build_dim,
             detector.λ,
@@ -176,11 +180,14 @@ mutable struct Observations{T<:AbstractFloat, S<:Real}
             label=label,
             FTYPE=FTYPE
         )
+        if !isnothing(diversity)
+            create_diversity_phase!(diversity, masks)
+        end
         nsubaps = masks.nsubaps
         nepochs = (nepochs==0) ? length(times) : nepochs
         DTYPE = gettypes(detector)[2]
         optics.response .*= detector.qe
-        observations = new{FTYPE, DTYPE}(label, masks, optics, ϕ_static, detector, ζ, D, area, times, nsubexp, nepochs, nsubaps, nsubaps_side, dim)
+        observations = new{FTYPE, DTYPE}(label, masks, optics, ϕ_static, diversity, detector, ζ, D, area, times, nsubexp, nepochs, nsubaps, nsubaps_side, dim)
         if verb == true
             display(observations)
         end
@@ -198,6 +205,7 @@ mutable struct Observations{T<:AbstractFloat, S<:Real}
             nsubaps_side=1,
             nsubexp=-1,
             ϕ_static=[;;;],
+            diversity=nothing,
             build_dim=size(images, 1),
             label="",
             verb=true,
@@ -214,10 +222,13 @@ mutable struct Observations{T<:AbstractFloat, S<:Real}
             label=label,
             FTYPE=FTYPE
         )
+        if !isnothing(diversity)
+            create_diversity_phase!(diversity, masks)
+        end
         entropy = [calculate_entropy(images[:, :, n, t]) for n=1:nsubaps, t=1:nepochs]
         DTYPE = gettypes(detector)[2]
         optics.response .*= detector.qe
-        observations = new{FTYPE, DTYPE}(label, masks, optics, ϕ_static, detector, ζ, D, area, times, nsubexp, nepochs, nsubaps, nsubaps_side, dim, images, entropy)
+        observations = new{FTYPE, DTYPE}(label, masks, optics, ϕ_static, diversity, detector, ζ, D, area, times, nsubexp, nepochs, nsubaps, nsubaps_side, dim, images, entropy)
         if verb == true
             display(observations)
         end

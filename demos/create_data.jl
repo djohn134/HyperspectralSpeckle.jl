@@ -2,7 +2,6 @@ include("../src/HyperspectralSpeckle.jl")
 using Main.HyperspectralSpeckle
 using Statistics
 
-
 ############# Data Parameters #############
 FTYPE = Float32;
 # folder = "/home/dan/Desktop/JASS_2024/tests";
@@ -21,7 +20,6 @@ nλ = 1
 λmin = λ_nyquist = 500.0e-9
 λmax = 500.0e-9  # m
 λ = collect(range(λmin, stop=λmax, length=nλ))  # m
-# λ_nyquist = minimum(λ)  # m
 Δλ = (nλ == 1) ? 1.0 : (λmax - λmin) / (nλ - 1)  # m
 resolution = mean(λ) / Δλ
 ###########################################
@@ -64,6 +62,14 @@ detector_full = Detector(
     DTYPE=DTYPE,
     label="Full Aperture"
 )
+diversity = Diversity(
+    4,
+    1.0,
+    4*exptime,
+    minimum(times),
+    verb=verb,
+    FTYPE=FTYPE
+)
 ### Create Full-Ap Observations object ####
 ϕ_static_full = zeros(FTYPE, image_dim, image_dim, nλ)
 # ϕ_static_full = repeat(masks_full.masks[:, :, 1, 1] .* create_zernike_screen(image_dim, image_dim÷4, 4, 4.0, FTYPE=FTYPE), 1, 1, nλ)
@@ -78,48 +84,45 @@ observations_full = Observations(
     nsubexp=1,
     nsubaps_side=1,
     dim=image_dim,
-    ϕ_static=ϕ_static_full,
+    diversity=diversity,
     verb=verb,
     FTYPE=FTYPE,
     label="Full Aperture"
 )
-# observations = [observations_full]
-optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
-detector_wfs = Detector(
-    qe=qe,
-    rn=rn,
-    pixscale=pixscale_wfs,
-    gain=gain,
-    saturation=saturation,
-    λ=λ,
-    λ_nyquist=λ_nyquist,
-    exptime=exptime,
-    verb=verb,
-    FTYPE=FTYPE,
-    DTYPE=DTYPE,
-    label="Wavefront Sensor"
-)
-### Create Full-Ap Observations object ####
-ϕ_static_wfs = zeros(FTYPE, image_dim, image_dim, nλ)
-observations_wfs = Observations(
-    optics_wfs,
-    detector_wfs,
-    ζ=ζ,
-    D=D,
-    area=aperture_area,
-    times=times,
-    nsubexp=1,
-    nsubaps_side=nsubaps_side,
-    dim=wfs_dim,
-    ϕ_static=ϕ_static_wfs,
-    build_dim=observations_full.dim,
-    verb=verb,
-    FTYPE=FTYPE,
-    label="Wavefront Sensor"
-)
-nsubaps = observations_wfs.masks.nsubaps
-observations_wfs.masks.scale_psfs = observations_full.masks.scale_psfs
-observations = [observations_full, observations_wfs]
+observations = [observations_full]
+# optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
+# detector_wfs = Detector(
+#     qe=qe,
+#     rn=rn,
+#     pixscale=pixscale_wfs,
+#     gain=gain,
+#     saturation=saturation,
+#     λ=λ,
+#     λ_nyquist=λ_nyquist,
+#     exptime=exptime,
+#     verb=verb,
+#     FTYPE=FTYPE,
+#     DTYPE=DTYPE,
+#     label="Wavefront Sensor"
+# )
+# observations_wfs = Observations(
+#     detector_wfs,
+#     ζ=ζ,
+#     D=D,
+#     area=aperture_area,
+#     times=times,
+#     nsubexp=1,
+#     nsubaps_side=nsubaps_side,
+#     dim=wfs_dim,
+#     ϕ_static=ϕ_static_wfs,
+#     build_dim=observations_full.dim,
+#     verb=verb,
+#     FTYPE=FTYPE,
+#     label="Wavefront Sensor"
+# )
+# nsubaps = observations_wfs.masks.nsubaps
+# observations_wfs.masks.scale_psfs = observations_full.masks.scale_psfs
+# observations = [observations_full, observations_wfs]
 header = create_header(λ, units="unitless")
 [writefits(observations[dd].masks.masks, "$(folder)/masks_ISH$(observations[dd].masks.nsubaps_side)x$(observations[dd].masks.nsubaps_side)$(id).fits", header=header) for dd=1:length(observations)]
 ###########################################
@@ -155,7 +158,7 @@ writefits(dropdims(sum(object.object, dims=3), dims=3)*Δλ, "$(folder)/object_t
 ###########################################
 
 ########## Anisopatch Parameters ##########
-isoplanatic = false
+isoplanatic = true
 patch_dim = 64
 ###### Create Anisoplanatic Patches #######
 patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FTYPE=FTYPE, verb=verb)
@@ -173,7 +176,7 @@ seeds = [713, 1212, 525118]
 Dmeta = D .+ (fov/206265) .* heights
 sampling_nyquist_mperpix = layer_nyquist_sampling_mperpix(D, image_dim, nlayers)
 sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heights, image_dim)
-~, transmission = readtransmission("../data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
+~, transmission = readtransmission("/home/dan/Desktop/HyperspectralSpeckle.jl/data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
 ############ Create Atmosphere ############
 atmosphere = Atmosphere(
     λ,
@@ -186,6 +189,7 @@ atmosphere = Atmosphere(
     transmission=transmission,
     sampling_nyquist_mperpix=sampling_nyquist_mperpix,
     sampling_nyquist_arcsecperpix=sampling_nyquist_arcsecperpix,
+    transmission=transmission,
     λ_nyquist=λ_nyquist,
     λ_ref=λ_ref,
     propagate=propagate,
@@ -214,4 +218,4 @@ writefits(atmosphere.phase, "$(folder)/Dr0_$(round(Int64, Dr0_ref_vertical))_pha
 ## Anisoplanatic
 # Naive threadix: 197.684 s (751385 allocations: 144.23 MiB)
 # OhMyThreads.Channel: 205.700 s (748062 allocations: 151.27 MiB)
-#                      102.606 s (743478 allocations: 151.16 MiB)      
+#                      102.606 s (743478 allocations: 151.16 MiB)   
