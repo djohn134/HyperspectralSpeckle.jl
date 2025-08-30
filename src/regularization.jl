@@ -1,40 +1,31 @@
 mutable struct Regularizers{T<:AbstractFloat}
     o_reg::Function
-    opd_reg::Function
+    wf_reg::Function
     λ_reg::Function
     βo::T
-    βopd::T
+    βwf::T
     βλ::T
     βo_schedule::Function
-    βopd_schedule::Function
+    βwf_schedule::Function
     βλ_schedule::Function
     function Regularizers(;
             o_reg=no_reg(),
-            opd_reg=no_reg(),
+            wf_reg=no_reg(),
             λ_reg=no_reg(),
             βo=0.0,
-            βopd=0.0,
+            βwf=0.0,
             βλ=0.0,
             βo_schedule=ConstantSchedule(βo),
-            βopd_schedule=ConstantSchedule(βopd),
+            βwf_schedule=ConstantSchedule(βwf),
             βλ_schedule=ConstantSchedule(βλ),
             verb=true,
             FTYPE=Float64
         )
         regularizers = new{FTYPE}(o_reg, wf_reg, λ_reg, βo, βwf, βλ, βo_schedule, βwf_schedule, βλ_schedule)
         if verb == true
-<<<<<<< HEAD
             display(regularizers)
         end
         return regularizers
-=======
-            println("Object spatial regularizer: $(o_reg), β₀=$(βo) (schedule: $(βo_schedule))")
-            println("Object wavelength regularizer: $(opd_reg), β₀=$(βopd) (schedule: $(βopd_schedule))")
-            println("OPD spatial regularizer: $(λ_reg), β₀=$(βλ) (schedule: $(βλ_schedule))")
-        end
-
-        return new{FTYPE}(o_reg, opd_reg, λ_reg, βo, βopd, βλ, βo_schedule, βopd_schedule, βλ_schedule)
->>>>>>> main
     end
 end
 

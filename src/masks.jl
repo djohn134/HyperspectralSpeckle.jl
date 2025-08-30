@@ -34,7 +34,6 @@ mutable struct Masks{T<:AbstractFloat}
         masks_arr, ix = make_ish_masks(dim, nsubaps_side, λ, D_inner_frac=D_inner_frac, λ_nyquist=λ_nyquist, verb=false, FTYPE=FTYPE)
         nλ = length(λ)
         Δλ = (nλ == 1) ? 1.0 : (maximum(λ) - minimum(λ)) / (nλ - 1)
-<<<<<<< HEAD
         nsubaps = size(masks_arr, 3)
         scale_psfs = [FTYPE(1 / norm(masks_arr[:, :, 1, w], 2)) for w=1:nλ]
         masks = new{FTYPE}(label, masks_arr, dim, λ, λ_nyquist, nλ, Δλ, nsubaps, nsubaps_side, scale_psfs, ix)
@@ -42,13 +41,6 @@ mutable struct Masks{T<:AbstractFloat}
             display(masks)
         end
         return masks
-=======
-
-        nsubaps = size(masks, 3)
-        # nsubaps_side = round(Int, sqrt(nsubaps))
-        scale_psfs = [FTYPE(1 / norm(masks[:, :, 1, w], 2)) for w=1:nλ]
-        new{FTYPE}(masks, dim, λ, λ_nyquist, nλ, Δλ, nsubaps, nsubaps_side, scale_psfs, ix)
->>>>>>> main
     end
 end
 

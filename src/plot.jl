@@ -10,13 +10,16 @@ const PLOT_OPTIONS = (
 
 mutable struct ReconstructionFigures
     object_fig::Figure
-    opd_fig::Figure
+    wf_fig::Figure
+    static_phase_fig::Figure
     heights_fig::Figure
     object_ax::Axis
-    opd_ax::Vector{Axis}
+    wf_ax::Vector{Axis}
+    static_phase_ax::Vector{Axis}
     heights_ax::Axis
     object_obs::Observable
-    opd_obs::Vector{Observable}
+    wf_obs::Vector{Observable}
+    static_phase_obs::Vector{Observable}
     heights_obs::Vector{Observable}
     ϵ_obs::Vector{Observable}
     function ReconstructionFigures()
@@ -54,7 +57,7 @@ function plot_opd(atmosphere; show=false, write=false, filename="", label="OPD [
     plt = [plot!(ax[l], obs[l], colormap=PLOT_OPTIONS[:CMAP_WAVEFRONT]) for l=1:atmosphere.nlayers]
     [Colorbar(fig[1, 2*l+1], plt[l], width=10, height=Relative(3/4), labelsize=16, ticklabelsize=16) for l=1:atmosphere.nlayers]
     trim!(fig.layout)
-
+    
     if show == true
         display(GLMakie.Screen(), fig)
     end
@@ -63,18 +66,17 @@ function plot_opd(atmosphere; show=false, write=false, filename="", label="OPD [
         save(filename, fig, px_per_unit=2)
         println("Figure written to $(filename)")
     end
-    return fig, o_ax, o_obs
+    return fig, ax, obs
 end
 
 function plot_phase(atmosphere; show=false, write=false, filename="", label="Phase [rad] @ $(round(atmosphere.λ[1]*1e9, digits=1)) nm")
     fig = Figure(size=(400*atmosphere.nlayers, 400))
-    l_ax = [Axis(fig[1, 2*l], titlesize=18) for l=1:atmosphere.nlayers]
-    [l_ax[l].title = "Layer $(l) - $(label)" for l=1:atmosphere.nlayers]
-    [hidedecorations!(ax) for ax in l_ax]
-    [ax.aspect = DataAspect() for ax in l_ax]
-    l_obs = [Observable(rotr90(atmosphere.opd[:, :, l])) for l=1:atmosphere.nlayers]
-    l_plt = [plot!(l_ax[l], l_obs[l], colormap=PLOT_OPTIONS[:CMAP_WAVEFRONT]) for l=1:atmosphere.nlayers]
-    [Colorbar(fig[1, 2*l+1], l_plt[l], width=10, height=Relative(3/4), labelsize=16, ticklabelsize=16) for l=1:atmosphere.nlayers]
+    ax = [Axis(fig[1, 2*l], titlesize=18, aspect=DataAspect()) for l=1:atmosphere.nlayers]
+    [ax[l].title = "Layer $(l) - $(label)" for l=1:atmosphere.nlayers]
+    hidedecorations!.(ax)
+    obs = [Observable(rotr90(atmosphere.phase[:, :, l, 1])) for l=1:atmosphere.nlayers]
+    plt = [plot!(ax[l], obs[l], colormap=PLOT_OPTIONS[:CMAP_WAVEFRONT]) for l=1:atmosphere.nlayers]
+    [Colorbar(fig[1, 2*l+1], plt[l], width=10, height=Relative(3/4), labelsize=16, ticklabelsize=16) for l=1:atmosphere.nlayers]
     trim!(fig.layout)
     
     if show == true
@@ -139,7 +141,7 @@ function update_object_figure(object, reconstruction)
     figs.object_obs[] = rotr90(object)
 end
 
-function update_layer_figure(opd, atmosphere, reconstruction)
+function update_opd_figure(opd, atmosphere, reconstruction)
     figs = reconstruction.figures
     for l=1:atmosphere.nlayers
         figs.wf_obs[l][] = rotr90(opd[:, :, l] .* 1e9)

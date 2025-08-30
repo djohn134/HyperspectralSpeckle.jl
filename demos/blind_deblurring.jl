@@ -14,18 +14,18 @@ plot = true
 
 ##### Size, Timestep, and Wavelengths #####
 nsubaps_side = 6
-datafile_wfs = "$(folder)/Dr0_20_ISH$(nsubaps_side)x$(nsubaps_side)_images.fits"
-images_wfs, nsubaps, ~, wfs_dim, exptime_wfs, times_wfs = readimages(datafile_wfs, FTYPE=FTYPE)
+# datafile_wfs = "$(folder)/Dr0_20_ISH$(nsubaps_side)x$(nsubaps_side)_images.fits"
+# images_wfs, nsubaps, ~, wfs_dim, exptime_wfs, times_wfs = readimages(datafile_wfs, FTYPE=FTYPE)
 datafile_full = "$(folder)/Dr0_20_ISH1x1_images.fits"
 images_full, ~, ~, image_dim, exptime_full, times_full = readimages(datafile_full, FTYPE=FTYPE)
 nλ = 1
 nλint = 1
-λ_ref = 500.0e-9
+λ_ref = 500.0e-9  # m
 λmin = λ_nyquist = 500.0e-9
-λmax = 500.0e-9
-λ = (nλ == 1) ? [mean([λmax, λmin])] : collect(range(λmin, stop=λmax, length=nλ))
-λ₀ = (nλ₀ == 1) ? [mean([λmax, λmin])] : collect(range(λmin, stop=λmax, length=nλ₀))
-Δλ = (nλ == 1) ? 1.0 : (λmax - λmin) / (nλ - 1)
+λmax = 500.0e-9  # m
+λ = collect(range(λmin, stop=λmax, length=nλ))  # m
+Δλ = (nλ == 1) ? 1.0 : (λmax - λmin) / (nλ - 1)  # m
+resolution = mean(λ) / Δλ
 ###########################################
 
 ########## Anisopatch Parameters ##########
@@ -46,7 +46,7 @@ saturation = 30000.0  # e⁻
 gain = saturation / (typemax(DTYPE))  # e⁻ / ADU
 qefile = "../data/qe/prime-95b_qe.dat"
 ~, qe = readqe(qefile, λ=λ)
-rn = 1.0
+rn = 2.0
 exptime = 5e-3
 ζ = 0.0
 ########## Create Optical System ##########
@@ -61,9 +61,17 @@ detector_full = Detector(
     pixscale=pixscale_full,
     λ=λ,
     λ_nyquist=λ_nyquist,
-    exptime=exptime_full,
+    exptime=exptime,
     verb=verb,
     label="Full Aperture",
+    FTYPE=FTYPE
+)
+diversity = Diversity(
+    4,
+    1.0,
+    4*exptime_full,
+    minimum(times_full),
+    verb=verb,
     FTYPE=FTYPE
 )
 ### Create Full-Ap Observations object ####
@@ -77,43 +85,46 @@ observations_full = Observations(
     D=D,
     D_inner_frac=D_inner_frac,
     ϕ_static=ϕ_static_full,
+    diversity=diversity,
     verb=verb,
     label="Full Aperture",
     FTYPE=FTYPE
 )
-##### Create WFS Observations object ######
-detector_wfs = Detector(
-    qe=qe,
-    rn=rn,
-    gain=gain,
-    pixscale=pixscale_wfs,
-    λ=λ,
-    λ_nyquist=λ_nyquist,
-    exptime=exptime_wfs,
-    verb=verb,
-    label="Wavefront Sensor",
-    FTYPE=FTYPE
-)
-datafile = "$(folder)/Dr0_20_ISH6x6_images.fits"
-observations_wfs = Observations(
-    times_wfs,
-    images_wfs,
-    optics_wfs,
-    detector_wfs,
-    ζ=ζ,
-    D=D,
-    D_inner_frac=D_inner_frac,
-    nsubaps_side=nsubaps_side,
-    ϕ_static=ϕ_static_wfs,
-    build_dim=observations_full.dim,
-    verb=verb,
-    label="Wavefront Sensor",
-    FTYPE=FTYPE
-)
-nsubaps = observations_wfs.masks.nsubaps
-observations_wfs.masks.scale_psfs = observations_full.masks.scale_psfs
-observations = [observations_wfs, observations_full]
-background = 0 # mean(fit_background(observations_full))
+observations = [observations_full]
+# optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
+# detector_wfs = Detector(
+#     qe=qe,
+#     rn=rn,
+#     gain=gain,
+#     pixscale=pixscale_wfs,
+#     λ=λ,
+#     λ_nyquist=λ_nyquist,
+#     exptime=exptime_wfs,
+#     verb=verb,
+#     label="Wavefront Sensor",
+#     FTYPE=FTYPE
+# )
+# ### Create Full-Ap Observations object ####
+# ϕ_static_wfs = zeros(FTYPE, image_dim, image_dim, nλ)
+# observations_wfs = Observations(
+#     times_wfs,
+#     images_wfs,
+#     optics_wfs,
+#     detector_wfs,
+#     ζ=ζ,
+#     D=D,
+#     D_inner_frac=D_inner_frac,
+#     nsubaps_side=nsubaps_side,
+#     ϕ_static=ϕ_static_wfs,
+#     build_dim=observations_full.dim,
+#     verb=verb,
+#     label="Wavefront Sensor",
+#     FTYPE=FTYPE
+# )
+# nsubaps = observations_wfs.masks.nsubaps
+# observations_wfs.masks.scale_psfs = observations_full.masks.scale_psfs
+# observations = [observations_wfs, observations_full]
+background = 0# mean(fit_background(observations_full))
 ###########################################
 
 
@@ -185,8 +196,8 @@ reconstruction = Reconstruction(
     λmax=λmax,
     nλ=nλ,
     nλint=nλint,
-    niter_mfbd=100,
-    maxiter=30,
+    niter_mfbd=10,
+    maxiter=10,
     # indx_boot=[1:2],
     wavefront_parameter=:phase,
     frozen_flow=true,
@@ -202,9 +213,3 @@ reconstruction = Reconstruction(
 );
 reconstruct!(reconstruction, observations, atmosphere, object, patches, write=true, folder=folder, id=id)
 ###########################################
-
-# calculate_composite_pupil_eff(patches, atmosphere, observations, object, masks, build_dim=image_dim, propagate=false)
-# writefits(patches.ϕ_slices, "$(folder)/phase_recon_slices$(id).fits")
-# writefits(patches.ϕ_composite, "$(folder)/phase_recon_composite$(id).fits")
-# writefits(atmosphere.masks, "$(folder)/layer_masks$(id).fits")
-# writefits(atmosphere.opd, "$(folder)/opd_recon_planesubtracted$(id).fits")

@@ -1,3 +1,6 @@
+using Crayons
+
+
 function Base.display(patches::AnisoplanaticPatches{<:AbstractFloat})
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Anisoplanatic Patches\n"); print(Crayon(reset=true))
     println("\tSize: $(patches.dim)×$(patches.dim) pixels")
@@ -59,6 +62,13 @@ function Base.display(optical_system::OpticalSystem{<:AbstractFloat})
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Optical system\n"); print(Crayon(reset=true))
     println("\tNumber of elements: $(length(optical_system.elements))")
     println("\tWavelength: $(minimum(optical_system.λ)) — $(maximum(optical_system.λ)) m")
+end
+
+function Base.display(diversity::Diversity{<:AbstractFloat})
+    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Diversity\n"); print(Crayon(reset=true))
+    println("\tNoll index: $(diversity.ixNoll)")
+    println("\tWaves: $(diversity.waves)")
+    println("\tPeriod: $(diversity.period) sec")
 end
 
 function Base.display(observations::Observations{<:AbstractFloat, <:Real})

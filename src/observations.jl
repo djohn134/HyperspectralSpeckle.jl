@@ -1,7 +1,6 @@
 import Interpolations: LinearInterpolation, Line
 
 
-<<<<<<< HEAD
 const OPTICS_DIR = "$(@__DIR__)/../data/optics"
 const ELEMENT_FILENAMES = Dict(
     ## Filter
@@ -23,27 +22,23 @@ const ELEMENT_FILENAMES = Dict(
     "Thorlabs:DMLP650P-reflected"=>"$(OPTICS_DIR)/DMLP650-reflected.dat",
     "Thorlabs:DMLP805P-transmitted"=>"$(OPTICS_DIR)/DMLP805-transmitted.dat",
     "Thorlabs:DMLP805P-reflected"=>"$(OPTICS_DIR)/DMLP805-reflected.dat",
-=======
-const FILTER_FILENAMES = Dict(
-    "Bessell:U"=>"data/filters/Generic_Bessell.U.dat",
-    "Bessell:B"=>"data/filters/Generic_Bessell.B.dat",
-    "Bessell:V"=>"data/filters/Generic_Bessell.V.dat",
-    "Bessell:R"=>"data/filters/Generic_Bessell.R.dat",
-    "Bessell:I"=>"data/filters/Generic_Bessell.I.dat",
-    "broadband"=>"data/filters/broadband.dat"
->>>>>>> main
 )
 
-struct Filter{T<:AbstractFloat}
+
+struct OpticalElement{T<:AbstractFloat}
+    name::String
     λ::Vector{T}
     response::Vector{T}
-    function Filter(;
-            filtername="", 
+    xflip::Bool
+    yflip::Bool
+    function OpticalElement(;
             λ=[],
             response=[],
+            xflip=false,
+            yflip=false,
+            name="",
             FTYPE=Float64
         )
-<<<<<<< HEAD
         """
             OpticalElement(; λ=..., response=..., xflip=..., yflip=..., name=..., FTYPE=...)
 
@@ -63,29 +58,15 @@ struct Filter{T<:AbstractFloat}
                 response = max.(0.0, itp(λ))
             else
                 λ = λ₀
-=======
-        if filtername != ""
-            λfilter, response = readfile(FILTER_FILENAMES["$filtername"])
-            if λ != []
-                itp = LinearInterpolation(λfilter, response, extrapolation_bc=Line())
-                response = itp(λ)
-                λfilter = λ
->>>>>>> main
             end
-        else
-            λfilter = λ
         end
 
-        return new{FTYPE}(λfilter, response)
+        return new{FTYPE}(name, λ, response, xflip, yflip)
     end
 end
 
-<<<<<<< HEAD
 struct Detector{T<:AbstractFloat, S<:Real}
     label::String
-=======
-struct Detector{T<:AbstractFloat, S<:Integer}
->>>>>>> main
     λ::Vector{T}
     λ_nyquist::T
     qe::Vector{T}
@@ -94,7 +75,6 @@ struct Detector{T<:AbstractFloat, S<:Integer}
     saturation::T
     pixscale::T
     exptime::T
-    filter::Filter{T}
     function Detector(;
             λ=[],
             λ_nyquist=400.0,
@@ -104,16 +84,11 @@ struct Detector{T<:AbstractFloat, S<:Integer}
             gain=1.0,
             saturation=1e99,
             exptime=5e-3,
-<<<<<<< HEAD
             label="",
             verb=true,
-=======
-            filter=Filter(λ=λ, response=ones(FTYPE, length(λ)), FTYPE=Float64),
->>>>>>> main
             FTYPE=Float64,
-            DTYPE=UInt16
+            DTYPE=FTYPE
         )
-<<<<<<< HEAD
         detector = new{FTYPE, DTYPE}(label, λ, λ_nyquist, qe, rn, gain, saturation, pixscale, exptime)
         if verb == true
             display(detector)
@@ -158,15 +133,8 @@ mutable struct Observations{T<:AbstractFloat, S<:Real}
     masks::Masks{T}
     optics::OpticalSystem{T}
     phase_static::Array{T, 3}
+    diversity::Union{Diversity{T}, Nothing}
     detector::Detector{T, S}
-=======
-        return new{FTYPE, DTYPE}(λ, λ_nyquist, qe, rn, gain, saturation, pixscale, exptime, filter)
-    end
-end
-
-mutable struct Observations{T<:AbstractFloat}
-    detector::Detector{T}
->>>>>>> main
     ζ::T
     D::T
     aperture_area::T
@@ -175,22 +143,16 @@ mutable struct Observations{T<:AbstractFloat}
     nepochs::Int64
     nsubaps::Int64
     nsubaps_side::Int64
-    α::T
     dim::Int64
     images::Array{T, 4}
     entropy::Matrix{T}
     psfs::Array{T, 3}
     model_images::Array{T, 4}
-<<<<<<< HEAD
-=======
-    psfs::Array{T, 5}
-    monochromatic_images::Array{T, 5}
->>>>>>> main
     w::Vector{Int64}
     positions::Array{T, 4}
     function Observations(
+            optics,
             detector;
-<<<<<<< HEAD
             ζ=Inf,
             D=Inf,
             D_inner_frac=0,
@@ -201,11 +163,13 @@ mutable struct Observations{T<:AbstractFloat}
             nsubaps_side=1,
             dim=0,
             ϕ_static=[;;;],
+            diversity=nothing,
             build_dim=dim,
             label="",
             verb=true,
             FTYPE=Float64
         )
+
         masks = Masks(
             build_dim,
             detector.λ,
@@ -216,33 +180,16 @@ mutable struct Observations{T<:AbstractFloat}
             label=label,
             FTYPE=FTYPE
         )
+        if !isnothing(diversity)
+            create_diversity_phase!(diversity, masks)
+        end
         nsubaps = masks.nsubaps
         nepochs = (nepochs==0) ? length(times) : nepochs
         DTYPE = gettypes(detector)[2]
         optics.response .*= detector.qe
-        observations = new{FTYPE, DTYPE}(label, masks, optics, ϕ_static, detector, ζ, D, area, times, nsubexp, nepochs, nsubaps, nsubaps_side, dim)
+        observations = new{FTYPE, DTYPE}(label, masks, optics, ϕ_static, diversity, detector, ζ, D, area, times, nsubexp, nepochs, nsubaps, nsubaps_side, dim)
         if verb == true
             display(observations)
-=======
-            ζ=0.0,
-            D=1.0,
-            nepochs=1,
-            nsubaps=1,
-            nsubaps_side=1,
-            α=1.0,
-            dim=256,
-            datafile::String = "",
-            FTYPE=Float64
-        )
-        if (datafile != "")
-            images, nsubaps, nepochs, dim = readimages(datafile, FTYPE=FTYPE)
-            entropy = [calculate_entropy(images[:, :, n, t]) for n=1:nsubaps, t=1:nepochs]
-            println("Loading $(nepochs) frames of size $(dim)x$(dim) pixels for $(nsubaps) subapertures")
-            print(" |-> "); printstyled("$(datafile)\n", color=:red)
-            return new{FTYPE}(detector, ζ, D, nepochs, nsubaps, nsubaps_side, α, dim, images, entropy)
-        else
-            return new{FTYPE}(detector, ζ, D, nepochs, nsubaps, nsubaps_side, α, dim)
->>>>>>> main
         end
         return observations
     end
@@ -258,6 +205,7 @@ mutable struct Observations{T<:AbstractFloat}
             nsubaps_side=1,
             nsubexp=-1,
             ϕ_static=[;;;],
+            diversity=nothing,
             build_dim=size(images, 1),
             label="",
             verb=true,
@@ -274,10 +222,13 @@ mutable struct Observations{T<:AbstractFloat}
             label=label,
             FTYPE=FTYPE
         )
+        if !isnothing(diversity)
+            create_diversity_phase!(diversity, masks)
+        end
         entropy = [calculate_entropy(images[:, :, n, t]) for n=1:nsubaps, t=1:nepochs]
         DTYPE = gettypes(detector)[2]
         optics.response .*= detector.qe
-        observations = new{FTYPE, DTYPE}(label, masks, optics, ϕ_static, detector, ζ, D, area, times, nsubexp, nepochs, nsubaps, nsubaps_side, dim, images, entropy)
+        observations = new{FTYPE, DTYPE}(label, masks, optics, ϕ_static, diversity, detector, ζ, D, area, times, nsubexp, nepochs, nsubaps, nsubaps_side, dim, images, entropy)
         if verb == true
             display(observations)
         end
