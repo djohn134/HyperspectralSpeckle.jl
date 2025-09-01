@@ -146,7 +146,10 @@ mutable struct Observations{T<:AbstractFloat, S<:Real}
     dim::Int64
     images::Array{S, 4}
     entropy::Matrix{T}
-    psfs::Array{T, 3}
+    opd::Array{T, 3}
+    phase::Array{T, 4}
+    amplitude::Array{T, 4}
+    psfs::Array{T, 4}
     model_images::Array{T, 4}
     w::Vector{Int64}
     positions::Array{T, 4}

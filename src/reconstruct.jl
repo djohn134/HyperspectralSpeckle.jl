@@ -139,8 +139,11 @@ struct BufferChannels{T<:AbstractFloat}
             wavefront_zeros = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers)
             channel_wavefront_gradient_buffer = Channel{Array{FTYPE, 3}}(nthreads)
         elseif (wavefront_parameter == :phase) && (frozen_flow==false)
-            wavefront_zeros = zeros(FTYPE, build_dim, build_dim, sum([observations[dd].nepochs for dd=1:ndatasets]), atmosphere.nλ)
+            wavefront_zeros = zeros(FTYPE, build_dim, build_dim, observations[1].nepochs, atmosphere.nλ)
             channel_wavefront_gradient_buffer = Channel{Array{FTYPE, 4}}(nthreads)
+        elseif (wavefront_parameter == :opd) && (frozen_flow==false)
+            wavefront_zeros = zeros(FTYPE, build_dim, build_dim, observations[1].nepochs)
+            channel_wavefront_gradient_buffer = Channel{Array{FTYPE, 3}}(nthreads)
         end
         channel_object_gradient_buffer = Channel{Array{FTYPE, 3}}(nthreads)
         channel_layerdim_cplx = Channel{Matrix{Complex{FTYPE}}}(nthreads)
@@ -237,9 +240,7 @@ mutable struct Reconstruction{T<:AbstractFloat}
     noise_model::Symbol
     weight_function::Function
     fg_object::Function
-    gradient_object::Function
     fg_wf::Function
-    gradient_wf::Function
     frozen_flow::Bool
     niter_mfbd::Int64
     indx_boot::Vector{UnitRange{Int64}}
@@ -307,15 +308,7 @@ mutable struct Reconstruction{T<:AbstractFloat}
 
         weight_function = getfield(Main, Symbol("$(noise_model)_weighting"))
         fg_object = getfield(Main, Symbol("fg_object_$(minimization_scheme)"))
-        gradient_object = getfield(Main, Symbol("gradient_object_$(minimization_scheme)_$(noise_model)noise!"))
-
-        ffm_string = (frozen_flow==true) ? "_ffm" : ""
-        fg_wf = getfield(Main, Symbol("fg_$(wavefront_parameter)$(ffm_string)_$(minimization_scheme)"))
-        gradient_wf = getfield(Main, Symbol("gradient_$(wavefront_parameter)$(ffm_string)_$(minimization_scheme)_$(noise_model)noise!"))
-        if frozen_flow == false
-            atmosphere.phase = zeros(FTYPE, build_dim, build_dim, sum([observations[dd].nepochs for dd=1:ndatasets]), nλtotal)
-            atmosphere.A = zeros(FTYPE, build_dim, build_dim, sum([observations[dd].nepochs for dd=1:ndatasets]), nλtotal)
-        end
+        fg_wf = getfield(Main, Symbol("fg_$(wavefront_parameter)_$(minimization_scheme)"))
 
         helpers = Helpers(
             atmosphere, 
@@ -334,8 +327,17 @@ mutable struct Reconstruction{T<:AbstractFloat}
         end
 
         for dd=1:ndatasets
-            observations[dd].model_images = zeros(FTYPE, observations[dd].dim, observations[dd].dim, observations[dd].nsubaps, observations[dd].nepochs)
-            observations[dd].w = findall((observations[dd].optics.response .* observations[dd].detector.qe) .> 0)
+            obs = observations[dd]
+            if frozen_flow == false
+                if wavefront_parameter == :phase
+                    obs.phase = zeros(FTYPE, build_dim, build_dim, obs.nepochs, nλtotal)
+                    # obs.amplitude = zeros(FTYPE, build_dim, build_dim, obs.nepochs, nλtotal)
+                elseif wavefront_parameter == :opd
+                    obs.opd = zeros(FTYPE, build_dim, build_dim, obs.nepochs)
+                end
+            end
+            obs.model_images = zeros(FTYPE, obs.dim, obs.dim, obs.nsubaps, obs.nepochs)
+            obs.w = findall((obs.optics.response .* obs.detector.qe) .> 0)
         end
 
         verb_levels = VERB_LEVELS[mfbd_verb_level]
@@ -348,14 +350,13 @@ mutable struct Reconstruction{T<:AbstractFloat}
                 figs.object_fig, figs.object_ax, figs.object_obs = plot_object(object, show=false)
                 Base.display(GLMakie.Screen(), figs.object_fig)
                 if frozen_flow == true
-                    plot_layers = getfield(Main, Symbol("plot_$(symbol2str[wavefront_parameter])"))
-                    figs.wf_fig, figs.wf_ax, figs.wf_obs = plot_layers(atmosphere, show=false)
+                    figs.wf_fig, figs.wf_ax, figs.wf_obs = plot_wavefront(observations, atmosphere, wavefront_parameter, show=false)
                     Base.display(GLMakie.Screen(), figs.wf_fig)
                 end
             end
-            reconstruction = new{FTYPE}(λ, λtotal, nλ, nλint, nλtotal, Δλ, Δλtotal, ndatasets, build_dim, wavefront_parameter, minimization_scheme, noise_model, weight_function, fg_object, gradient_object, fg_wf, gradient_wf, frozen_flow, niter_mfbd, indx_boot, niter_boot, maxiter, ϵ, grtol, frtol, xrtol, maxeval, regularizers, smoothing, minFWHM, maxFWHM, fwhm_schedule, helpers, verb_levels, plot, figs)
+            reconstruction = new{FTYPE}(λ, λtotal, nλ, nλint, nλtotal, Δλ, Δλtotal, ndatasets, build_dim, wavefront_parameter, minimization_scheme, noise_model, weight_function, fg_object, fg_wf, frozen_flow, niter_mfbd, indx_boot, niter_boot, maxiter, ϵ, grtol, frtol, xrtol, maxeval, regularizers, smoothing, minFWHM, maxFWHM, fwhm_schedule, helpers, verb_levels, plot, figs)
         else
-            reconstruction = new{FTYPE}(λ, λtotal, nλ, nλint, nλtotal, Δλ, Δλtotal, ndatasets, build_dim, wavefront_parameter, minimization_scheme, noise_model, weight_function, fg_object, gradient_object, fg_wf, gradient_wf, frozen_flow, niter_mfbd, indx_boot, niter_boot, maxiter, ϵ, grtol, frtol, xrtol, maxeval, regularizers, smoothing, minFWHM, maxFWHM, fwhm_schedule, helpers, verb_levels, plot)
+            reconstruction = new{FTYPE}(λ, λtotal, nλ, nλint, nλtotal, Δλ, Δλtotal, ndatasets, build_dim, wavefront_parameter, minimization_scheme, noise_model, weight_function, fg_object, fg_wf, frozen_flow, niter_mfbd, indx_boot, niter_boot, maxiter, ϵ, grtol, frtol, xrtol, maxeval, regularizers, smoothing, minFWHM, maxFWHM, fwhm_schedule, helpers, verb_levels, plot)
         end
 
         if verb == true
@@ -402,9 +403,15 @@ function reconstruct!(reconstruction, observations, atmosphere, object, patches;
                 end
             end
 
+            if reconstruction.frozen_flow == true
+                starting_wf = getproperty(atmosphere, reconstruction.wavefront_parameter)
+            else
+                starting_wf = getproperty(observations[1], reconstruction.wavefront_parameter)
+            end
+
             ## Reconstruct Phase
             crit_wf = (x, g) -> reconstruction.fg_wf(x, g, current_observations, atmosphere, patches, reconstruction, object)
-            vmlmb!(crit_wf, getproperty(atmosphere, reconstruction.wavefront_parameter), verb=reconstruction.verb_levels["vo"], fmin=0, mem=5, maxiter=reconstruction.maxiter, gtol=(0, reconstruction.grtol), ftol=(0, reconstruction.frtol), xtol=(0, reconstruction.xrtol), maxeval=reconstruction.maxeval["wf"])
+            vmlmb!(crit_wf, starting_wf, verb=reconstruction.verb_levels["vo"], fmin=0, mem=5, maxiter=reconstruction.maxiter, gtol=(0, reconstruction.grtol), ftol=(0, reconstruction.frtol), xtol=(0, reconstruction.xrtol), maxeval=reconstruction.maxeval["wf"])
             if (reconstruction.plot == true) && (reconstruction.frozen_flow == true)
                 update_layer_figure(atmosphere, reconstruction)
             end
@@ -431,8 +438,12 @@ function reconstruct!(reconstruction, observations, atmosphere, object, patches;
             if write == true
                 [writefits(observations[dd].model_images, "$(folder)/models_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_recon$(id).fits") for dd=1:reconstruction.ndatasets]
                 writefits(object.object, "$(folder)/object_recon$(id).fits")
-                writefits(getfield(atmosphere, reconstruction.wavefront_parameter), "$(folder)/$(symbol2str[reconstruction.wavefront_parameter])_recon$(id).fits")
-                writefile([reconstruction.ϵ], "$(folder)/recon$(id).dat")
+                if reconstruction.frozen_flow == true
+                    writefits(getfield(atmosphere, reconstruction.wavefront_parameter), "$(folder)/$(symbol2str[reconstruction.wavefront_parameter])_recon$(id).fits")
+                    writefile([reconstruction.ϵ], "$(folder)/recon$(id).dat")
+                else
+                    [writefits(observations[dd].phase, "$(folder)/phase_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_recon$(id).fits") for dd=1:reconstruction.ndatasets]
+                end
             end
 
             if reconstruction.ϵ == ϵ₀

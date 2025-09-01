@@ -88,7 +88,7 @@ function add_noise!(image, rn, poisson::Bool; FTYPE=Float64)
     end
     ## Read noise has a non-zero mean and sigma!
     image .+= rn .* randn(FTYPE, size(image))
-    image .= max.(image, Ref(zero(FTYPE)))
+    image .= max.(image, zero(FTYPE))
 end
 
 @views function calculate_composite_pupil!(A, ϕ_composite, ϕ_slices, ϕ_full, nlayers, extractors, mask, sampling_nyquist_mperpix, heights; propagate=true)
@@ -160,6 +160,73 @@ end
     create_detector_images!(patches, observations, atmosphere, object, refraction, extractors, channels, noise=noise)
 end
 
+@views function create_detector_images!(patches, observations, atmosphere, object, refraction, extractors, channels; noise=false)
+    FTYPE = gettype(observations)
+    prog = Progress(observations.nepochs*observations.nsubexp*observations.nsubaps)
+    tforeach(collect(Iterators.product(1:observations.nepochs, 1:observations.nsubaps))) do (t, n)
+        buffers = take_buffers(channels)
+        for tsub=1:observations.nsubexp 
+            create_radiant_energy_pre_detector!(buffers.image_float, observations, object, atmosphere, patches, refraction, extractors[(t-1)*observations.nsubexp + tsub, :, :, :], buffers, (; n, t))
+            next!(prog)
+        end
+
+        buffers.image_float .= max.(zero(FTYPE), buffers.image_float)
+        if noise == true
+            add_noise!(buffers.image_float, observations.detector.rn, true, FTYPE=FTYPE)
+        end
+        buffers.image_float .= min.(buffers.image_float, observations.detector.saturation)
+        buffers.image_float ./= observations.detector.gain  # Converts e⁻ to counts
+        convert_image(observations.images[:, :, n, t], buffers.image_float) # Converts floating-point counts to integer at bitdepth of detector
+        put_buffers(buffers, channels)
+    end
+    finish!(prog)
+end
+
+@views function create_radiant_energy_pre_detector!(image, observations, object, atmosphere, patches, refraction, extractors, buffers, ixs; frozen_flow=true)
+    for np=1:patches.npatches
+        for w₁=1:atmosphere.nλ
+            for w₂=1:object.nλint
+                w = (w₁-1)*object.nλint + w₂
+                create_spectral_irradiance_at_aperture!(observations, object, atmosphere, patches, refraction, extractors, buffers, (; ixs..., np, w), frozen_flow=frozen_flow)
+                image .+= buffers.image_small .* (atmosphere.Δλ * observations.aperture_area * observations.detector.exptime)
+            end
+        end
+    end
+end
+
+@views function create_spectral_irradiance_at_aperture!(observations, object, atmosphere, patches, refraction, extractors, buffers, ixs; frozen_flow=true)
+    if frozen_flow == true
+        calculate_composite_pupil!(buffers.A, buffers.ϕ_composite, buffers.ϕ_slices, atmosphere.phase[:, :, :, ixs.w], atmosphere.nlayers, extractors[ixs.np, :, ixs.w], observations.masks.masks[:, :, ixs.n, ixs.w], atmosphere.sampling_nyquist_mperpix, atmosphere.heights)
+    else
+        buffers.ϕ_composite .= observations.phase[:, :, ixs.t, ixs.w]
+    end
+
+    ## Convolve the phase with a gaussian
+    if !isnothing(buffers.smooth)
+        convolve!(buffers.ϕ_composite, buffers.smooth, buffers.ϕ_composite)
+    end
+
+    ## Add in the static phase, if any
+    if !isempty(observations.phase_static)
+        buffers.ϕ_composite .+= observations.phase_static[:, :, ixs.w]
+    end
+
+    ## Add in the diversity phase, if any
+    if !isnothing(observations.diversity)
+        buffers.ϕ_composite .+= observations.diversity.phase[:, :, ixs.w] .* observations.diversity.schedule(observations.times[ixs.t])
+    end
+
+    pupil2psf!(buffers.psf[:, :, ixs.np, ixs.w], buffers.psf_temp, observations.masks.masks[:, :, ixs.n, ixs.w], buffers.P[:, :, ixs.np, ixs.w], buffers.p[:, :, ixs.np, ixs.w], buffers.A, buffers.ϕ_composite, observations.masks.scale_psfs[ixs.w], buffers.iffts, refraction[ixs.w])
+    buffers.psf[:, :, ixs.np, ixs.w] ./= object.nλint
+
+    buffers.object_patch .= patches.w[:, :, ixs.np] .* object.object[:, :, ixs.w]
+    convolve!(buffers.image_big, buffers.conv_plan, buffers.object_patch, buffers.psf[:, :, ixs.np, ixs.w])
+
+    block_reduce!(buffers.image_small, buffers.image_big)
+    buffers.image_small .+= object.background / (atmosphere.Δλ * atmosphere.nλ * object.nλint * patches.npatches)
+    buffers.image_small .*= observations.optics.response[ixs.w] * atmosphere.transmission[ixs.w]
+end
+
 function take_buffers(channels)
     image_float = take!(channels.channel_imagedim)
     image_small = take!(channels.channel_imagedim)
@@ -194,61 +261,4 @@ function put_buffers(buffers, channels)
     put!(channels.channel_iffts, buffers.iffts)
     put!(channels.channel_convs, buffers.conv_plan)
     put!(channels.channel_smooth, buffers.smooth)
-end
-
-@views function create_detector_images!(patches, observations, atmosphere, object, refraction, extractors, channels; noise=false)
-    FTYPE = gettype(observations)
-    prog = Progress(observations.nepochs*observations.nsubexp*observations.nsubaps)
-    tforeach(collect(Iterators.product(1:observations.nepochs, 1:observations.nsubaps))) do (t, n)
-        buffers = take_buffers(channels)
-        for tsub=1:observations.nsubexp 
-            create_radiant_energy_pre_detector!(buffers.image_float, observations, object, atmosphere, patches, refraction, extractors[(t-1)*observations.nsubexp + tsub, :, :, :], buffers, (; n, t))
-            next!(prog)
-        end
-
-        buffers.image_float .= max.(zero(FTYPE), buffers.image_float)
-        if noise == true
-            add_noise!(buffers.image_float, observations.detector.rn, true, FTYPE=FTYPE)
-        end
-        buffers.image_float .= min.(buffers.image_float, observations.detector.saturation)
-        buffers.image_float ./= observations.detector.gain  # Converts e⁻ to counts
-        convert_image(observations.images[:, :, n, t], buffers.image_float) # Converts floating-point counts to integer at bitdepth of detector
-        put_buffers(buffers, channels)
-    end
-    finish!(prog)
-end
-
-@views function create_radiant_energy_pre_detector!(image, observations, object, atmosphere, patches, refraction, extractors, buffers, ixs)
-    for np=1:patches.npatches
-        for w₁=1:atmosphere.nλ
-            for w₂=1:object.nλint
-                w = (w₁-1)*object.nλint + w₂
-                create_spectral_irradiance_at_aperture!(observations, object, atmosphere, patches, refraction, extractors, buffers, (; ixs..., np, w))
-                image .+= buffers.image_small .* (atmosphere.Δλ * observations.aperture_area * observations.detector.exptime)
-            end
-        end
-    end
-end
-
-@views function create_spectral_irradiance_at_aperture!(observations, object, atmosphere, patches, refraction, extractors, buffers, ixs)
-    calculate_composite_pupil!(buffers.A, buffers.ϕ_composite, buffers.ϕ_slices, atmosphere.phase[:, :, :, ixs.w], atmosphere.nlayers, extractors[ixs.np, :, ixs.w], observations.masks.masks[:, :, ixs.n, ixs.w], atmosphere.sampling_nyquist_mperpix, atmosphere.heights)
-    if !isnothing(buffers.smooth)
-        convolve!(buffers.ϕ_composite, buffers.smooth, buffers.ϕ_composite)
-    end
-    if !isempty(observations.phase_static)
-        buffers.ϕ_composite .+= observations.phase_static[:, :, ixs.w]
-    end
-    if !isnothing(observations.diversity)
-        buffers.ϕ_composite .+= observations.diversity.phase[:, :, ixs.w] .* observations.diversity.schedule(observations.times[ixs.t])
-    end
-
-    pupil2psf!(buffers.psf[:, :, ixs.np, ixs.w], buffers.psf_temp, observations.masks.masks[:, :, ixs.n, ixs.w], buffers.P[:, :, ixs.np, ixs.w], buffers.p[:, :, ixs.np, ixs.w], buffers.A, buffers.ϕ_composite, observations.masks.scale_psfs[ixs.w], buffers.iffts, refraction[ixs.w])
-    buffers.psf[:, :, ixs.np, ixs.w] ./= object.nλint
-
-    buffers.object_patch .= patches.w[:, :, ixs.np] .* object.object[:, :, ixs.w]
-    convolve!(buffers.image_big, buffers.conv_plan, buffers.object_patch, buffers.psf[:, :, ixs.np, ixs.w])
-
-    block_reduce!(buffers.image_small, buffers.image_big)
-    buffers.image_small .+= object.background / (atmosphere.Δλ * atmosphere.nλ * object.nλint * patches.npatches)
-    buffers.image_small .*= observations.optics.response[ixs.w] * atmosphere.transmission[ixs.w]
 end

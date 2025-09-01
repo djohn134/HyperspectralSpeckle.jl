@@ -35,5 +35,5 @@ function create_zernike_screen(dim, radius, index, waves; FTYPE=Float64)
 end
 
 function triangle_wave(t0, P; FTYPE=Float64)
-    return (t) -> FTYPE(2 * abs(2*((t - t0) / P - floor((t - t0) / P + 1/2))) - 1)
+    return (t) -> FTYPE( 2/pi * asin(sin(2pi * (t - t0)/P)) )
 end

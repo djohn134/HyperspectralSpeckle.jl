@@ -41,7 +41,7 @@ DTYPE = FTYPE
 exptime = 5e-3  # sec
 nepochs = 11
 times = collect(0:nepochs-1) .* exptime
-noise = false
+noise = true
 ζ = 0.0  # deg
 ########## Create Optical System ##########
 filter = OpticalElement(name="Bessell:V", FTYPE=FTYPE)
@@ -62,16 +62,17 @@ detector_full = Detector(
     DTYPE=DTYPE,
     label="Full Aperture"
 )
-diversity = Diversity(
-    4,
-    1.0,
-    4*exptime,
-    minimum(times),
-    verb=verb,
-    FTYPE=FTYPE
-)
+# diversity = Diversity(
+#     4,
+#     1.0,
+#     2*(maximum(times)-minimum(times)),
+#     minimum(times),
+#     verb=verb,
+#     FTYPE=FTYPE
+# )
+
 ### Create Full-Ap Observations object ####
-ϕ_static_full = zeros(FTYPE, image_dim, image_dim, nλ)
+# ϕ_static_full = zeros(FTYPE, image_dim, image_dim, nλ)
 # ϕ_static_full = repeat(masks_full.masks[:, :, 1, 1] .* create_zernike_screen(image_dim, image_dim÷4, 4, 4.0, FTYPE=FTYPE), 1, 1, nλ)
 # writefits(ϕ_static_full, "$(folder)/defocus4.fits")
 observations_full = Observations(
@@ -84,45 +85,46 @@ observations_full = Observations(
     nsubexp=1,
     nsubaps_side=1,
     dim=image_dim,
-    diversity=diversity,
+    # diversity=diversity,
     verb=verb,
     FTYPE=FTYPE,
     label="Full Aperture"
 )
-observations = [observations_full]
-# optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
-# detector_wfs = Detector(
-#     qe=qe,
-#     rn=rn,
-#     pixscale=pixscale_wfs,
-#     gain=gain,
-#     saturation=saturation,
-#     λ=λ,
-#     λ_nyquist=λ_nyquist,
-#     exptime=exptime,
-#     verb=verb,
-#     FTYPE=FTYPE,
-#     DTYPE=DTYPE,
-#     label="Wavefront Sensor"
-# )
-# observations_wfs = Observations(
-#     detector_wfs,
-#     ζ=ζ,
-#     D=D,
-#     area=aperture_area,
-#     times=times,
-#     nsubexp=1,
-#     nsubaps_side=nsubaps_side,
-#     dim=wfs_dim,
-#     ϕ_static=ϕ_static_wfs,
-#     build_dim=observations_full.dim,
-#     verb=verb,
-#     FTYPE=FTYPE,
-#     label="Wavefront Sensor"
-# )
-# nsubaps = observations_wfs.masks.nsubaps
-# observations_wfs.masks.scale_psfs = observations_full.masks.scale_psfs
-# observations = [observations_full, observations_wfs]
+# observations = [observations_full]
+optics_wfs = OpticalSystem([filter, beamsplitter], λ, verb=verb, FTYPE=FTYPE)
+detector_wfs = Detector(
+    qe=qe,
+    rn=rn,
+    pixscale=pixscale_wfs,
+    gain=gain,
+    saturation=saturation,
+    λ=λ,
+    λ_nyquist=λ_nyquist,
+    exptime=exptime,
+    verb=verb,
+    FTYPE=FTYPE,
+    DTYPE=DTYPE,
+    label="Wavefront Sensor"
+)
+observations_wfs = Observations(
+    optics_wfs,
+    detector_wfs,
+    ζ=ζ,
+    D=D,
+    area=aperture_area,
+    times=times,
+    nsubexp=1,
+    nsubaps_side=nsubaps_side,
+    dim=wfs_dim,
+    # ϕ_static=ϕ_static_wfs,
+    build_dim=observations_full.dim,
+    verb=verb,
+    FTYPE=FTYPE,
+    label="Wavefront Sensor"
+)
+nsubaps = observations_wfs.masks.nsubaps
+observations_wfs.masks.scale_psfs = observations_full.masks.scale_psfs
+observations = [observations_full, observations_wfs]
 header = create_header(λ, units="unitless")
 [writefits(observations[dd].masks.masks, "$(folder)/masks_ISH$(observations[dd].masks.nsubaps_side)x$(observations[dd].masks.nsubaps_side)$(id).fits", header=header) for dd=1:length(observations)]
 ###########################################
@@ -158,7 +160,7 @@ writefits(dropdims(sum(object.object, dims=3), dims=3)*Δλ, "$(folder)/object_t
 ###########################################
 
 ########## Anisopatch Parameters ##########
-isoplanatic = true
+isoplanatic = false
 patch_dim = 64
 ###### Create Anisoplanatic Patches #######
 patches = AnisoplanaticPatches(patch_dim, image_dim, isoplanatic=isoplanatic, FTYPE=FTYPE, verb=verb)
@@ -189,7 +191,6 @@ atmosphere = Atmosphere(
     transmission=transmission,
     sampling_nyquist_mperpix=sampling_nyquist_mperpix,
     sampling_nyquist_arcsecperpix=sampling_nyquist_arcsecperpix,
-    transmission=transmission,
     λ_nyquist=λ_nyquist,
     λ_ref=λ_ref,
     propagate=propagate,

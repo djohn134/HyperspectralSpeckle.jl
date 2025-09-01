@@ -48,6 +48,18 @@ function plot_object(object; show=true, write=false, filename="", label="Irradia
     return fig, ax, obs
 end
 
+function plot_wavefront(observations, atmosphere, wavefront_parameter; show=false, write=false, filename="")
+    if wavefront_parameter == :phase
+        fig, ax, obs = plot_phase(atmosphere, show=show, write=write, filename=filename)
+    elseif wavefront_parameter == :opd
+        fig, ax, obs = plot_opd(atmosphere, show=show, write=write, filename=filename)
+    elseif wavefront_parameter == :static_phase
+        fig, ax, obs = plot_static_phase(observations, show=show, write=write, filename=filename)
+    end
+
+    return fig, ax, obs
+end
+
 function plot_opd(atmosphere; show=false, write=false, filename="", label="OPD [nm]")
     fig = Figure(size=(400*atmosphere.nlayers, 400))
     ax = [Axis(fig[1, 2*l], titlesize=18, aspect=DataAspect()) for l=1:atmosphere.nlayers]

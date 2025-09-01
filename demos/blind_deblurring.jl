@@ -7,15 +7,15 @@ using Statistics;
 FTYPE = Float32;
 # folder = "/home/dan/Desktop/JASS_2024/tests";
 folder = "test"
-id = ""
+id = "_onlyFullAp_mixed"
 verb = true
 plot = true
 ###########################################
 
 ##### Size, Timestep, and Wavelengths #####
 nsubaps_side = 6
-# datafile_wfs = "$(folder)/Dr0_20_ISH$(nsubaps_side)x$(nsubaps_side)_images.fits"
-# images_wfs, nsubaps, ~, wfs_dim, exptime_wfs, times_wfs = readimages(datafile_wfs, FTYPE=FTYPE)
+datafile_wfs = "$(folder)/Dr0_20_ISH$(nsubaps_side)x$(nsubaps_side)_images.fits"
+images_wfs, nsubaps, ~, wfs_dim, exptime_wfs, times_wfs = readimages(datafile_wfs, FTYPE=FTYPE)
 datafile_full = "$(folder)/Dr0_20_ISH1x1_images.fits"
 images_full, ~, ~, image_dim, exptime_full, times_full = readimages(datafile_full, FTYPE=FTYPE)
 nλ = 1
@@ -66,16 +66,16 @@ detector_full = Detector(
     label="Full Aperture",
     FTYPE=FTYPE
 )
-diversity = Diversity(
-    4,
-    1.0,
-    4*exptime_full,
-    minimum(times_full),
-    verb=verb,
-    FTYPE=FTYPE
-)
+# diversity = Diversity(
+#     4,
+#     1.0,
+#     2*(maximum(times_full)-minimum(times_full)),
+#     minimum(times_full),
+#     verb=verb,
+#     FTYPE=FTYPE
+# )
 ### Create Full-Ap Observations object ####
-ϕ_static_full = zeros(FTYPE, image_dim, image_dim, nλ)
+# ϕ_static_full = zeros(FTYPE, image_dim, image_dim, nλ)
 observations_full = Observations(
     times_full,
     images_full,
@@ -84,8 +84,8 @@ observations_full = Observations(
     ζ=ζ,
     D=D,
     D_inner_frac=D_inner_frac,
-    ϕ_static=ϕ_static_full,
-    diversity=diversity,
+    # ϕ_static=ϕ_static_full,
+    # diversity=diversity,
     verb=verb,
     label="Full Aperture",
     FTYPE=FTYPE
@@ -99,7 +99,7 @@ observations = [observations_full]
 #     pixscale=pixscale_wfs,
 #     λ=λ,
 #     λ_nyquist=λ_nyquist,
-#     exptime=exptime_wfs,
+#     exptime=exptime,
 #     verb=verb,
 #     label="Wavefront Sensor",
 #     FTYPE=FTYPE
@@ -115,7 +115,7 @@ observations = [observations_full]
 #     D=D,
 #     D_inner_frac=D_inner_frac,
 #     nsubaps_side=nsubaps_side,
-#     ϕ_static=ϕ_static_wfs,
+#     # ϕ_static=ϕ_static_wfs,
 #     build_dim=observations_full.dim,
 #     verb=verb,
 #     label="Wavefront Sensor",
@@ -124,18 +124,19 @@ observations = [observations_full]
 # nsubaps = observations_wfs.masks.nsubaps
 # observations_wfs.masks.scale_psfs = observations_full.masks.scale_psfs
 # observations = [observations_wfs, observations_full]
-background = 0# mean(fit_background(observations_full))
+[observations[dd].phase = readfits("test/phase_ISH1x1_recon_onlyFullAp.fits") for dd=1:length(observations)]
+background = 0  # mean(fit_background(observations_full))
 ###########################################
 
 
 ############ Object Parameters ############
 object_range = 500.0e3  # km
 ############## Create object ##############
-object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background/observations_full.dim^2, 0)
-object_arr = repeat(object_arr, 1, 1, nλ)
-object_arr ./= sum(object_arr)
-object_arr .*= (mean(sum(observations_full.images, dims=(1, 2, 3))) - background)
-# object_arr = readfits("$(folder)/object_truth_spectral.fits")
+# object_arr = max.(dropdims(mean(observations_full.images, dims=(3, 4)), dims=(3, 4)) .- background/observations_full.dim^2, 0)
+# object_arr = repeat(object_arr, 1, 1, nλ)
+# object_arr ./= sum(object_arr)
+# object_arr .*= (mean(sum(observations_full.images, dims=(1, 2, 3))) - background)
+object_arr = readfits("$(folder)/object_recon_onlyFullAp.fits")
 ~, spectrum = solar_spectrum(λ=λ)
 object = Object(
     object_arr,
@@ -153,14 +154,14 @@ object = Object(
 ###########################################
 
 ########## Atmosphere Parameters ##########
-heights = [0.0, 7000.0, 12500.0]
-wind_speed = wind_profile_roberts2011(heights, ζ)
-# heights .*= 0.0
-wind_direction = [45.0, 125.0, 135.0]
-wind = [wind_speed wind_direction]
-nlayers = length(heights)
-sampling_nyquist_mperpix = layer_nyquist_sampling_mperpix(D, image_dim, nlayers)
-sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heights, image_dim)
+# heights = [0.0, 7000.0, 12500.0]
+# wind_speed = wind_profile_roberts2011(heights, ζ)
+# # heights .*= 0.0
+# wind_direction = [45.0, 125.0, 135.0]
+# wind = [wind_speed wind_direction]
+# nlayers = length(heights)
+# sampling_nyquist_mperpix = layer_nyquist_sampling_mperpix(D, image_dim, nlayers)
+# sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heights, image_dim)
 ~, transmission = readtransmission("/home/dan/Desktop/HyperspectralSpeckle.jl/data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
 ############ Create Atmosphere ############
 atmosphere = Atmosphere(
@@ -168,11 +169,11 @@ atmosphere = Atmosphere(
     observations, 
     object, 
     patches,
-    wind=wind, 
-    heights=heights,
+    # wind=wind, 
+    # heights=heights,
     transmission=transmission,
-    sampling_nyquist_mperpix=sampling_nyquist_mperpix,
-    sampling_nyquist_arcsecperpix=sampling_nyquist_arcsecperpix,
+    # sampling_nyquist_mperpix=sampling_nyquist_mperpix,
+    # sampling_nyquist_arcsecperpix=sampling_nyquist_arcsecperpix,
     λ_nyquist=λ_nyquist,
     λ_ref=λ_ref,
     create_screens=false,
@@ -180,11 +181,11 @@ atmosphere = Atmosphere(
     verb=verb
 )
 ######### Set phase screens start #########
-atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
-# atmosphere.phase = readfits("test/Dr0_20_phase_full.fits")
+# atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
+# atmosphere.phase = readfits("test/phase_ISH1x1_recon.fits")
 ###########################################
-object.object .*= observations_full.detector.gain / (observations_full.detector.exptime * observations_full.aperture_area * mean(observations_full.optics.response) * mean(atmosphere.transmission))
-object.background *= observations_full.detector.gain / (observations_full.detector.exptime * observations_full.aperture_area * mean(observations_full.optics.response) * mean(atmosphere.transmission))
+# object.object .*= observations_full.detector.gain / (observations_full.detector.exptime * observations_full.aperture_area * mean(observations_full.optics.response) * mean(atmosphere.transmission))
+# object.background *= observations_full.detector.gain / (observations_full.detector.exptime * observations_full.aperture_area * mean(observations_full.optics.response) * mean(atmosphere.transmission))
 
 ######### Reconstruction Object ###########
 reconstruction = Reconstruction(
@@ -199,12 +200,12 @@ reconstruction = Reconstruction(
     niter_mfbd=10,
     maxiter=10,
     # indx_boot=[1:2],
-    wavefront_parameter=:phase,
-    frozen_flow=true,
+    wavefront_parameter=:opd,
+    frozen_flow=false,
     minimization_scheme=:mle,
-    noise_model=:gaussian,
+    noise_model=:mixed,
     maxeval=Dict("wf"=>100, "object"=>100),
-    smoothing=true,
+    smoothing=false,
     # fwhm_schedule=ConstantSchedule(0.5),
     build_dim=image_dim,
     verb=verb,
