@@ -37,7 +37,7 @@ end
             buffers = take_object_buffers(helpers, dd)
             subap_image = obs.model_images[:, :, n, t]  # Model image for each subap at each time
             ##
-            create_radiant_energy_pre_detector!(subap_image, obs, object, atmosphere, patches, refraction, extractors, buffers, (; n, t), frozen_flow=reconstruction.frozen_flow)
+            create_radiant_energy_pre_detector!(subap_image, obs, object, atmosphere, patches, refraction, extractors, buffers, (; n, t), wavefront_parameter=reconstruction.wavefront_parameter, frozen_flow=reconstruction.frozen_flow)
             subap_image ./= detector.gain
             buffers.ω .= reconstruction.weight_function(obs.entropy[n, t], subap_image, detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
             ϵ_local += loglikelihood_gaussian!(buffers.r, obs.images[:, :, n, t], subap_image, buffers.ω)  # Calculate the gaussian likelihood for the calculated model image and data frame
@@ -79,12 +79,12 @@ end
     end
 end
 
-@views function fg_phase_mle(x, g, observations, atmosphere, patches, reconstruction, object)
+@views function fg_wf_mle(x, g, observations, atmosphere, patches, reconstruction, object)
     FTYPE = gettype(reconstruction)  # Alias for the datatype
     if reconstruction.frozen_flow == true
         setfield!(atmosphere, reconstruction.wavefront_parameter, x)
         if reconstruction.plot == true  # If plotting is enabled, object and phase plots will be updated here with the current proposed values
-            update_phase_figure(x, atmosphere, reconstruction)
+            update_layer_figure(atmosphere, reconstruction)
         end
     end
     ndatasets = length(observations)  # Number of datasets to be processed
@@ -110,11 +110,11 @@ end
             ϵ_local = zero(FTYPE)
             buffers = take_wf_buffers(helpers, dd)
             subap_image = obs.model_images[:, :, n, t]  # Model image for each subap at each time
-            create_radiant_energy_pre_detector!(subap_image, obs, object, atmosphere, patches, refraction, extractors[t, :, :, :], buffers, (; n, t), frozen_flow=reconstruction.frozen_flow)
+            create_radiant_energy_pre_detector!(subap_image, obs, object, atmosphere, patches, refraction, extractors[t, :, :, :], buffers, (; n, t), wavefront_parameter=reconstruction.wavefront_parameter, frozen_flow=reconstruction.frozen_flow)
             subap_image ./= detector.gain
             buffers.ω .= reconstruction.weight_function(obs.entropy[n, t], subap_image, detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
             ϵ_local += loglikelihood_gaussian!(buffers.r, obs.images[:, :, n, t], subap_image, buffers.ω)  # Calculate the gaussian likelihood for the calculated model image and data frame
-            gradient_phase_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractors_adj[t, :, :, :], buffers, (; n, t))
+            gradient_wf_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractors_adj[t, :, :, :], buffers, (; n, t))
             put_wf_buffers(helpers, dd, buffers)
             return ϵ_local
         end
@@ -130,20 +130,28 @@ end
     ## Apply regularization
     if reconstruction.frozen_flow == true
         for l=1:atmosphere.nlayers
-            for w₁=1:reconstruction.nλ
-                for w₂=1:reconstruction.nλint 
-                    w = (w₁-1)*reconstruction.nλint + w₂
-                    reconstruction.ϵ += regularizers.wf_reg(x[:, :, l, w], g[:, :, l, w], regularizers.βwf)
+            if reconstruction.wavefront_parameter == :phase
+                for w₁=1:reconstruction.nλ
+                    for w₂=1:reconstruction.nλint 
+                        w = (w₁-1)*reconstruction.nλint + w₂
+                        reconstruction.ϵ += regularizers.wf_reg(x[:, :, l, w], g[:, :, l, w], regularizers.βwf)
+                    end
                 end
+            elseif reconstruction.wavefront_parameter == :opd
+                reconstruction.ϵ += regularizers.wf_reg(x[:, :, l], g[:, :, l], regularizers.βwf)
             end
         end
     else
         for t=1:observations[1].nepochs
-            for w₁=1:reconstruction.nλ
-                for w₂=1:reconstruction.nλint 
-                    w = (w₁-1)*reconstruction.nλint + w₂
-                    reconstruction.ϵ += regularizers.wf_reg(x[:, :, t, w], g[:, :, t, w], regularizers.βwf)
+            if reconstruction.wavefront_parameter == :phase
+                for w₁=1:reconstruction.nλ
+                    for w₂=1:reconstruction.nλint 
+                        w = (w₁-1)*reconstruction.nλint + w₂
+                        reconstruction.ϵ += regularizers.wf_reg(x[:, :, t, w], g[:, :, t, w], regularizers.βwf)
+                    end
                 end
+            elseif reconstruction.wavefront_parameter == :opd
+                reconstruction.ϵ += regularizers.wf_reg(x[:, :, t], g[:, :, t], regularizers.βwf)
             end
         end
     end
@@ -151,7 +159,7 @@ end
     return reconstruction.ϵ
 end
 
-@views function gradient_phase_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers, ixs)
+@views function gradient_wf_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers, ixs)
     if reconstruction.noise_model == :gaussian
         buffers.r .*= 2 .* buffers.ω
     elseif reconstruction.noise_model == :mixed
@@ -159,9 +167,17 @@ end
     end
 
     if reconstruction.frozen_flow == true
-        gradient_phase_ffm_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers)
+        if reconstruction.wavefront_parameter == :phase
+            gradient_phase_ffm_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers)
+        elseif reconstruction.wavefront_parameter == :opd
+            gradient_opd_ffm_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers)
+        end
     else
-        gradient_phase_nonffm_mle!(reconstruction, obs, atmosphere, refraction_adj, buffers, ixs)
+        if reconstruction.wavefront_parameter == :phase
+            gradient_phase_nonffm_mle!(reconstruction, obs, atmosphere, refraction_adj, buffers, ixs)
+        elseif reconstruction.wavefront_parameter == :opd
+            gradient_opd_nonffm_mle!(reconstruction, obs, atmosphere, refraction_adj, buffers, ixs)
+        end
     end
 end
 
@@ -222,102 +238,6 @@ end
     end
 end
 
-@views function fg_opd_mle(x, g, observations, atmosphere, patches, reconstruction, object)
-    FTYPE = gettype(reconstruction)  # Alias for the datatype
-    if reconstruction.frozen_flow == true
-        setfield!(atmosphere, reconstruction.wavefront_parameter, x)
-        if reconstruction.plot == true  # If plotting is enabled, object and phase plots will be updated here with the current proposed values
-            update_phase_figure(x, atmosphere, reconstruction)
-        end
-    end
-
-    if reconstruction.frozen_flow == true
-        for w=1:reconstruction.nλ
-            atmosphere.phase[:, :, :, w] .= x .* (2pi / reconstruction.λ[w])
-        end
-    end
-
-    ndatasets = length(observations)  # Number of datasets to be processed
-    helpers = reconstruction.helpers  # Alias for helpers, makes it quicker to type
-    regularizers = reconstruction.regularizers  # Alias for regularizers, makes it quicker to type
-    zeros!(g)  # Fill gradient with zeros, OptimPack initializes it with undef's, which can give crazy NaN values 
-    reconstruction.ϵ = zero(FTYPE)
-    
-    for dd=1:ndatasets  # Loop through data channels
-        ## Aliases for dataset-dependent parameters
-        obs = observations[dd]  # Dataset from the full set
-        if reconstruction.frozen_flow == false
-            setfield!(obs, reconstruction.wavefront_parameter, x)
-            for w=1:reconstruction.nλ
-                obs.phase[:, :, :, w] .= x .* (2pi / reconstruction.λ[w])
-            end
-        end
-        detector = obs.detector
-        extractors = helpers.extractor[dd]
-        extractors_adj = helpers.extractor_adj[dd]  # Interpolation operators for punch out        
-        refraction = helpers.refraction[dd, :]  # Refraction operator for the dataset
-        refraction_adj = helpers.refraction_adj[dd, :]  # Inverse refraction operator for the dataset
-        zeros!(obs.model_images)
-        ##
-        reconstruction.ϵ += tmapreduce(+, collect(Iterators.product(1:obs.nepochs, 1:obs.nsubaps))) do (t, n)  # Loop through all timesteps
-            ϵ_local = zero(FTYPE)
-            buffers = take_wf_buffers(helpers, dd)
-            subap_image = obs.model_images[:, :, n, t]  # Model image for each subap at each time
-            create_radiant_energy_pre_detector!(subap_image, obs, object, atmosphere, patches, refraction, extractors[t, :, :, :], buffers, (; n, t), frozen_flow=reconstruction.frozen_flow)
-            subap_image ./= detector.gain
-            buffers.ω .= reconstruction.weight_function(obs.entropy[n, t], subap_image, detector.rn)  # The statistical weight is given as either 1/σ^2 for purely gaussian noise, or 1/√(Î+σ^2) for gaussian and Poisson noise
-            ϵ_local += loglikelihood_gaussian!(buffers.r, obs.images[:, :, n, t], subap_image, buffers.ω)  # Calculate the gaussian likelihood for the calculated model image and data frame
-            gradient_opd_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractors_adj[t, :, :, :], buffers, (; n, t))
-            put_wf_buffers(helpers, dd, buffers)
-            return ϵ_local
-        end
-    end
-
-    for ~=1:Threads.nthreads()
-        buffer = take!(helpers.channels.wavefront_gradient_buffer)
-        g .+= buffer
-        zeros!(buffer)
-        put!(helpers.channels.wavefront_gradient_buffer, buffer)
-    end
-
-    ## Apply regularization
-    if reconstruction.frozen_flow == true
-        for l=1:atmosphere.nlayers
-            for w₁=1:reconstruction.nλ
-                for w₂=1:reconstruction.nλint 
-                    w = (w₁-1)*reconstruction.nλint + w₂
-                    reconstruction.ϵ += regularizers.wf_reg(x[:, :, l, w], g[:, :, l, w], regularizers.βwf)
-                end
-            end
-        end
-    else
-        for t=1:observations[1].nepochs
-            for w₁=1:reconstruction.nλ
-                for w₂=1:reconstruction.nλint 
-                    w = (w₁-1)*reconstruction.nλint + w₂
-                    reconstruction.ϵ += regularizers.wf_reg(x[:, :, t, w], g[:, :, t, w], regularizers.βwf)
-                end
-            end
-        end
-    end
-
-    return reconstruction.ϵ
-end
-
-@views function gradient_opd_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers, ixs)
-    if reconstruction.noise_model == :gaussian
-        buffers.r .*= 2 .* buffers.ω
-    elseif reconstruction.noise_model == :mixed
-        buffers.r .= 2 .* buffers.ω .* buffers.r .- (buffers.ω .* buffers.r).^2 .* obs.entropy[ixs.n, ixs.t]
-    end
-
-    if reconstruction.frozen_flow == true
-        gradient_opd_ffm_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers)
-    else
-        gradient_opd_nonffm_mle!(reconstruction, obs, atmosphere, refraction_adj, buffers, ixs)
-    end
-end
-
 @views function gradient_opd_ffm_mle!(reconstruction, obs, atmosphere, patches, refraction_adj, extractor_adj, buffers)
     FTYPE = gettype(reconstruction)
     block_replicate!(buffers.c, buffers.r)
@@ -335,7 +255,7 @@ end
 
                 buffers.d .*= buffers.P[:, :, np, w]
                 buffers.d2 .= imag.(buffers.d)
-                buffers.d2 .*= FTYPE(-4pi) * reconstruction.Δλ/reconstruction.λ[w] * obs.optics.response[w] * atmosphere.transmission[w] * obs.detector.gain * obs.detector.exptime * obs.aperture_area
+                buffers.d2 .*= FTYPE(-4pi) * (reconstruction.Δλ / reconstruction.λ[w]) * obs.optics.response[w] * atmosphere.transmission[w] * obs.detector.gain * obs.detector.exptime * obs.aperture_area
 
                 if !isnothing(buffers.unsmooth)
                     correlate!(buffers.d2, buffers.unsmooth, buffers.d2)

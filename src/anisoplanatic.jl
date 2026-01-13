@@ -95,13 +95,12 @@ end
     return extractor_adj
 end
 
-@views function change_heights!(patches, atmosphere, object, observations, masks, heights; reconstruction=[], verb=true)
+@views function change_heights!(patches, atmosphere, object, observations, heights; reconstruction=[], verb=true)
     if verb == true
         println("Heights changed from $(atmosphere.heights) m to $(heights) m")
     end
     
     FTYPE = gettype(atmosphere)
-    original_heights = atmosphere.heights
     original_dim = atmosphere.dim
     original_sampling_nyquist_arcsecperpix = atmosphere.sampling_nyquist_arcsecperpix
     atmosphere.heights = heights
@@ -128,11 +127,22 @@ end
     scaleby_wavelength = atmosphere.λ_nyquist ./ atmosphere.λ
     if reconstruction != []
         helpers = reconstruction.helpers
-        helpers = reconstruction.helpers
-        helpers.g_threads_ϕ = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ, Threads.nthreads())
-        helpers.ϕ_full = zeros(FTYPE, atmosphere.dim, atmosphere.dim, Threads.nthreads())
-        helpers.containers_sdim_real = zeros(FTYPE, atmosphere.dim, atmosphere.dim, Threads.nthreads())
-        helpers.containers_sdim_cplx = zeros(Complex{FTYPE}, atmosphere.dim, atmosphere.dim, Threads.nthreads())
+        channels = helpers.channels
+        channel_wavefront_gradient_buffer = Channel{Array{FTYPE, 4}}(Threads.nthreads())
+        channel_layerdim_real = Channel{Matrix{FTYPE}}(Threads.nthreads())
+        channel_layerdim_cplx = Channel{Matrix{Complex{FTYPE}}}(Threads.nthreads())
+        foreach(1:Threads.nthreads()) do ~
+            wavefront_gradient_buffer = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
+            layerdim_real = zeros(FTYPE, atmosphere.dim, atmosphere.dim)
+            layerdim_cplx = zeros(Complex{FTYPE}, atmosphere.dim, atmosphere.dim)
+            put!(channel_wavefront_gradient_buffer, wavefront_gradient_buffer)
+            put!(channel_layerdim_real, layerdim_real)
+            put!(channel_layerdim_cplx, layerdim_cplx)
+        end
+        channels.wavefront_gradient_buffer = channel_wavefront_gradient_buffer
+        channels.layerdim_real = channel_layerdim_real
+        channels.layerdim_cplx = channel_layerdim_cplx
+
         for dd=1:reconstruction.ndatasets
             helpers.extractor[dd] = create_patch_extractors(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=reconstruction.build_dim)
             helpers.extractor_adj[dd] = create_patch_extractors_adjoint(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=reconstruction.build_dim)

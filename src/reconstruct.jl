@@ -1,4 +1,5 @@
 using FFTW
+using Crayons
 using Statistics
 using LinearAlgebra
 using OptimPackNextGen
@@ -48,7 +49,7 @@ function ReciprocalSchedule(maxval, minval)
     return reciprocal
 end
 
-struct BufferChannels{T<:AbstractFloat}
+mutable struct BufferChannels{T<:AbstractFloat}
     object_gradient_buffer::Channel{Array{T, 3}}
     wavefront_gradient_buffer::Union{Channel{Array{T, 3}}, Channel{Array{T, 4}}}
     smooth::Union{Channel{Preconvolve{T}}, Channel{Nothing}}
@@ -279,12 +280,12 @@ mutable struct Reconstruction{T<:AbstractFloat}
             indx_boot=[1:dd for dd=1:ndatasets],
             maxiter=10,
             maxeval=Dict("object"=>100000, "wf"=>100000),
-            grtol=1e-9,
-            frtol=1e-9,
-            xrtol=1e-9,
+            grtol=1e-6,
+            frtol=1e-6,
+            xrtol=1e-6,
             smoothing=false,
             maxFWHM=50.0,
-            minFWHM=0.5,
+            minFWHM=1.5,
             fwhm_schedule=ExponentialSchedule(maxFWHM, niter_mfbd, minFWHM),
             regularizers=nothing,
             verb=true,
@@ -308,8 +309,8 @@ mutable struct Reconstruction{T<:AbstractFloat}
 
         weight_function = getfield(Main, Symbol("$(noise_model)_weighting"))
         fg_object = getfield(Main, Symbol("fg_object_$(minimization_scheme)"))
-        fg_wf = getfield(Main, Symbol("fg_$(wavefront_parameter)_$(minimization_scheme)"))
-
+        fg_wf = getfield(Main, Symbol("fg_wf_$(minimization_scheme)"))
+        
         helpers = Helpers(
             atmosphere, 
             observations,
@@ -375,6 +376,10 @@ function mixed_weighting(entropy, image, rn)
 end
 
 function reconstruct!(reconstruction, observations, atmosphere, object, patches; closeplots=true, write=false, folder="", id="")
+    if reconstruction.verb_levels["vm"] == true || reconstruction.verb_levels["vo"] == true
+        print("\n\n")
+    end
+
     FTYPE = gettype(reconstruction)
     for b=1:reconstruction.niter_boot
         current_observations = observations[reconstruction.indx_boot[b]]
@@ -389,19 +394,22 @@ function reconstruct!(reconstruction, observations, atmosphere, object, patches;
             preconvolve_object(reconstruction, patches, object)
 
             if reconstruction.verb_levels["vm"] == true
-                print("Bootstrap Iter: $(b)/$(reconstruction.niter_boot)\tMFBD Iter: $(current_iter)/$(reconstruction.niter_mfbd) ")
+                print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Bootstrap Iter: $(b)/$(reconstruction.niter_boot) | MFBD Iter: $(current_iter)/$(reconstruction.niter_mfbd)")
                 if reconstruction.smoothing == true
-                    print("\tFWHM:$(reconstruction.fwhm_schedule(absolute_iter)) ")
+                    print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), " | FWHM:$(reconstruction.fwhm_schedule(absolute_iter))\n")
+                else
+                    print("\n")
                 end
             end
+            print(Crayon(reset=true))
 
             ## Reconstruct complex pupil
-            if reconstruction.verb_levels["vm"] == true
-                print("--> Reconstructing complex pupil ")
-                if reconstruction.verb_levels["vo"] == true
-                    println()
-                end
+            if reconstruction.verb_levels["vm"] == true && reconstruction.verb_levels["vo"] == true
+                print("********** Wavefront Update **********\n")
+            elseif reconstruction.verb_levels["vm"] == true && reconstruction.verb_levels["vo"] == false
+                print("--> Wavefront Update ")
             end
+            print(Crayon(reset=true))
 
             if reconstruction.frozen_flow == true
                 starting_wf = getproperty(atmosphere, reconstruction.wavefront_parameter)
@@ -412,17 +420,21 @@ function reconstruct!(reconstruction, observations, atmosphere, object, patches;
             ## Reconstruct Phase
             crit_wf = (x, g) -> reconstruction.fg_wf(x, g, current_observations, atmosphere, patches, reconstruction, object)
             vmlmb!(crit_wf, starting_wf, verb=reconstruction.verb_levels["vo"], fmin=0, mem=5, maxiter=reconstruction.maxiter, gtol=(0, reconstruction.grtol), ftol=(0, reconstruction.frtol), xtol=(0, reconstruction.xrtol), maxeval=reconstruction.maxeval["wf"])
+            # for l=1:atmosphere.nlayers
+            #     atmosphere.phase[:, :, l, 1] .-= fit_plane(atmosphere.phase[:, :, l, 1], atmosphere.masks[:, :, l, 1])
+            #     atmosphere.phase[:, :, l, 1] .*= atmosphere.masks[:, :, l, 1]
+            # end
             if (reconstruction.plot == true) && (reconstruction.frozen_flow == true)
                 update_layer_figure(atmosphere, reconstruction)
             end
 
             ## Reconstruct Object
-            if reconstruction.verb_levels["vm"] == true
-                print("--> object ")
-                if reconstruction.verb_levels["vo"] == true
-                    println()
-                end
+            if reconstruction.verb_levels["vm"] == true && reconstruction.verb_levels["vo"] == true
+                print("********** Object Update **********\n")
+            elseif reconstruction.verb_levels["vm"] == true && reconstruction.verb_levels["vo"] == false
+                print("--> Object Update ")
             end
+            print(Crayon(reset=true))
 
             crit_obj = (x, g) -> reconstruction.fg_object(x, g,  current_observations, atmosphere, patches, reconstruction, object)
             vmlmb!(crit_obj, object.object, lower=0, fmin=0, verb=reconstruction.verb_levels["vo"], maxiter=reconstruction.maxiter, gtol=(0, reconstruction.grtol), ftol=(0, reconstruction.frtol), xtol=(0, reconstruction.xrtol), maxeval=reconstruction.maxeval["object"])
@@ -431,9 +443,12 @@ function reconstruct!(reconstruction, observations, atmosphere, object, patches;
             end
 
             ## Compute final criterion
-            if reconstruction.verb_levels["vm"] == true
-                println("--> ϵ:\t$(reconstruction.ϵ)")
+            if reconstruction.verb_levels["vm"] == true && reconstruction.verb_levels["vo"] == true
+                print(Crayon(foreground=:red, reset=true), "ϵ: $(reconstruction.ϵ)\n\n")
+            elseif reconstruction.verb_levels["vm"] == true && reconstruction.verb_levels["vo"] == false
+                print(Crayon(foreground=:red, reset=true), "--> ϵ: $(reconstruction.ϵ)\n\n")
             end
+            print(Crayon(reset=true))
 
             if write == true
                 [writefits(observations[dd].model_images, "$(folder)/models_ISH$(observations[dd].nsubaps_side)x$(observations[dd].nsubaps_side)_recon$(id).fits") for dd=1:reconstruction.ndatasets]
@@ -459,7 +474,7 @@ function reconstruct!(reconstruction, observations, atmosphere, object, patches;
     end
 end
 
-@views function height_solve!(observations, atmosphere, object, patches, masks, reconstruction; hmin=1000.0.*ones(atmosphere.nlayers-1), hmax=30000.0.*ones(atmosphere.nlayers-1), hstep=1000.0.*ones(atmosphere.nlayers-1), niters=1, verb=true)
+@views function height_solve!(observations, atmosphere, object, patches, reconstruction; hmin=1000.0.*ones(atmosphere.nlayers-1), hmax=30000.0.*ones(atmosphere.nlayers-1), hstep=1000.0.*ones(atmosphere.nlayers-1), niters=1, verb=true)
     if verb == true
         println("Solving heights for $(atmosphere.nlayers-1) layers")
     end
@@ -483,15 +498,15 @@ end
     figs.heights_obs = heights_obs
     figs.ϵ_obs = ϵ_obs
 
-    for it=1:niters
+    for ~=1:niters
         atmosphere = deepcopy(atmosphere_original)
         [fill!(ϵ[l], FTYPE(NaN)) for l=1:nlayers2fit]
         for l=1:nlayers2fit
             for h=1:length(height_trials[l])
                 heights[order2fit[l]] = height_trials[l][h]
                 print("\tHeight: $(heights)\t")
-                change_heights!(patches, atmosphere, object, observations, masks, heights, reconstruction=reconstruction, verb=false)
-                reconstruct!(reconstruction, observations, atmosphere, object, masks, patches, closeplots=false)
+                change_heights!(patches, atmosphere, object, observations, heights, reconstruction=reconstruction, verb=false)
+                reconstruct!(reconstruction, observations, atmosphere, object, patches, closeplots=false)
                 ϵ[l][h] = sum(reconstruction.ϵ[1])
                 println("ϵ: $(ϵ[l][h])")
                 atmosphere = deepcopy(atmosphere_original)
@@ -501,10 +516,10 @@ end
                 end
             end
             heights[order2fit[l]] = height_trials[l][argmin(ϵ[l])]
-            change_heights!(patches, atmosphere, object, observations, masks, heights, reconstruction=reconstruction, verb=false)
+            change_heights!(patches, atmosphere, object, observations, heights, reconstruction=reconstruction, verb=false)
         end
         println("Optimal Heights: $(heights)")
-        reconstruct!(reconstruction, observations, atmosphere, object, masks, patches, closeplots=false)
+        reconstruct!(reconstruction, observations, atmosphere, object, patches, closeplots=false)
         object_original = deepcopy(object)
         atmosphere_original = deepcopy(atmosphere)
         if reconstruction.plot == true

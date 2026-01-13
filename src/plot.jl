@@ -135,8 +135,8 @@ function plot_heights(atmosphere; heights=[], ϵ=[], show=false)
     base10exp = (length(ϵ_real)==0) ? 0 : floor(Int64, log10(minimum(ϵ_real)))
     ylabel = rich("Criterion [×10", superscript(string(base10exp)) , "]")
     fig = Figure(size=(600, 600))
-    ax = Axis(fig[1, 1], xlabel="Height [m]", ylabel=ylabel, xlabelsize=18, xticklabelsize=16, ylabelsize=18, yticklabelsize=16)
-    heights_obs = [Observable(heights[l]) for l=1:atmosphere.nlayers-1]
+    ax = Axis(fig[1, 1], xlabel="Height [km]", ylabel=ylabel, xlabelsize=18, xticklabelsize=16, ylabelsize=18, yticklabelsize=16)
+    heights_obs = [Observable(heights[l] / 1e3) for l=1:atmosphere.nlayers-1]
     ϵ_obs = [Observable(ϵ[l] ./ 10^base10exp) for l=1:atmosphere.nlayers-1]
     for l=1:atmosphere.nlayers-1
         scatterlines!(ax, heights_obs[l], ϵ_obs[l])
@@ -188,11 +188,11 @@ function update_heights_figure(heights, ϵ, atmosphere, reconstruction)
     ylabel = rich("Criterion [×10", superscript(string(base10exp)) , "]")
     figs = reconstruction.figures
     figs.heights_ax.ylabel = ylabel
-        for l=1:atmosphere.nlayers-1
-            figs.heights_obs[l][] = heights[l]
-            figs.ϵ_obs[l][] = ϵ[l] ./ 10^base10exp
-            reset_limits!(figs.heights_ax)
-        end
+    for l=1:atmosphere.nlayers-1
+        figs.heights_obs[l][] = heights[l] ./ 1e3
+        figs.ϵ_obs[l][] = ϵ[l] ./ 10^base10exp
+        reset_limits!(figs.heights_ax)
+    end
 end
 
 function savefig(filename, fig, px_per_unit)

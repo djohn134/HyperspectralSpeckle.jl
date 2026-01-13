@@ -36,7 +36,7 @@ export create_zernike_screen, create_diversity_phase!
 ## observations
 include("observations.jl")
 export Filter, OpticalElement, OpticalSystem, Detector, Observations
-export calculate_wfs_slopes
+export calculate_centroid_shifts!, calculate_wfs_phases! 
 
 ## object
 include("object.jl")
@@ -52,7 +52,7 @@ export get_refraction, refraction_at_layer_pix, refraction_at_detector_pix, laye
 ## criterion
 include("mle.jl")
 export loglikelihood_gaussian, loglikelihood_gaussian!
-export fg_object_mle, fg_psf_mle, fg_phase_mle, fg_opd_mle
+export fg_object_mle, fg_wf_mle
 
 ## mrl
 # include("mrl.jl")

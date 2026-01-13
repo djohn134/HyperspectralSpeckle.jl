@@ -182,25 +182,36 @@ end
     finish!(prog)
 end
 
-@views function create_radiant_energy_pre_detector!(image, observations, object, atmosphere, patches, refraction, extractors, buffers, ixs; frozen_flow=true)
+@views function create_radiant_energy_pre_detector!(image, observations, object, atmosphere, patches, refraction, extractors, buffers, ixs; wavefront_parameter=:phase, frozen_flow=true)
     for np=1:patches.npatches
         for w₁=1:atmosphere.nλ
             for w₂=1:object.nλint
                 w = (w₁-1)*object.nλint + w₂
-                create_spectral_irradiance_at_aperture!(observations, object, atmosphere, patches, refraction, extractors, buffers, (; ixs..., np, w), frozen_flow=frozen_flow)
+                create_spectral_irradiance_at_aperture!(observations, object, atmosphere, patches, refraction, extractors, buffers, (; ixs..., np, w), wavefront_parameter=wavefront_parameter, frozen_flow=frozen_flow)
                 image .+= buffers.image_small .* (atmosphere.Δλ * observations.aperture_area * observations.detector.exptime)
             end
         end
     end
 end
 
-@views function create_spectral_irradiance_at_aperture!(observations, object, atmosphere, patches, refraction, extractors, buffers, ixs; frozen_flow=true)
+@views function create_spectral_irradiance_at_aperture!(observations, object, atmosphere, patches, refraction, extractors, buffers, ixs; wavefront_parameter=:phase, frozen_flow=true)
+    FTYPE = gettype(observations)
     if frozen_flow == true
-        calculate_composite_pupil!(buffers.A, buffers.ϕ_composite, buffers.ϕ_slices, atmosphere.phase[:, :, :, ixs.w], atmosphere.nlayers, extractors[ixs.np, :, ixs.w], observations.masks.masks[:, :, ixs.n, ixs.w], atmosphere.sampling_nyquist_mperpix, atmosphere.heights)
+        if wavefront_parameter == :phase
+            calculate_composite_pupil!(buffers.A, buffers.ϕ_composite, buffers.ϕ_slices, atmosphere.phase[:, :, :, ixs.w], atmosphere.nlayers, extractors[ixs.np, :, ixs.w], observations.masks.masks[:, :, ixs.n, ixs.w], atmosphere.sampling_nyquist_mperpix, atmosphere.heights)
+        elseif wavefront_parameter == :opd
+            calculate_composite_pupil!(buffers.A, buffers.ϕ_composite, buffers.ϕ_slices, atmosphere.opd, atmosphere.nlayers, extractors[ixs.np, :, ixs.w], observations.masks.masks[:, :, ixs.n, ixs.w], atmosphere.sampling_nyquist_mperpix, atmosphere.heights)
+            buffers.ϕ_composite .*= FTYPE(2pi) / atmosphere.λ[ixs.w]
+        end
     else
-        buffers.ϕ_composite .= observations.phase[:, :, ixs.t, ixs.w]
+        if wavefront_parameter == :phase
+            buffers.ϕ_composite .= observations.phase[:, :, ixs.t, ixs.w]
+        elseif wavefront_parameter == :opd
+            buffers.ϕ_composite .= observations.opd[:, :, ixs.t]
+            buffers.ϕ_composite .*= FTYPE(2pi) / atmosphere.λ[ixs.w]
+        end
     end
-
+    
     ## Convolve the phase with a gaussian
     if !isnothing(buffers.smooth)
         convolve!(buffers.ϕ_composite, buffers.smooth, buffers.ϕ_composite)
@@ -215,7 +226,7 @@ end
     if !isnothing(observations.diversity)
         buffers.ϕ_composite .+= observations.diversity.phase[:, :, ixs.w] .* observations.diversity.schedule(observations.times[ixs.t])
     end
-
+    
     pupil2psf!(buffers.psf[:, :, ixs.np, ixs.w], buffers.psf_temp, observations.masks.masks[:, :, ixs.n, ixs.w], buffers.P[:, :, ixs.np, ixs.w], buffers.p[:, :, ixs.np, ixs.w], buffers.A, buffers.ϕ_composite, observations.masks.scale_psfs[ixs.w], buffers.iffts, refraction[ixs.w])
     buffers.psf[:, :, ixs.np, ixs.w] ./= object.nλint
 

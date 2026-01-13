@@ -562,6 +562,7 @@ end
     ## 1d vec of numbers to 2d image
     FTYPE = eltype(stack)
     mosaic = zeros(FTYPE, nside, nside)
+    fill!(mosaic, FTYPE(NaN))
     n1 = n2 = 1
     for y=1:nside
         for x=1:nside
@@ -647,7 +648,7 @@ function center_of_gravity(image)
     yy = xx'
     Δx = sum(xx .* image) / sum(image)
     Δy = sum(yy .* image) / sum(image)
-    return Δx, Δy
+    return [Δx, Δy]
 end
 
 function zeros!(A::AbstractArray{T}) where {T<:Number}

@@ -245,7 +245,7 @@ end
     atmosphere.phase = zeros(FTYPE, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
     
     Threads.@threads for w=1:atmosphere.nλ
-        sampling_mperpix = atmosphere.sampling_nyquist_mperpix .* (atmosphere.λ[w]/atmosphere.λ_nyquist)
+        sampling_mperpix = atmosphere.sampling_nyquist_mperpix .* (atmosphere.λ[w] / atmosphere.λ_nyquist)
         r0λ = atmosphere.r0 * (atmosphere.λ[w] / atmosphere.λ_ref)^(6/5)
         for l=1:atmosphere.nlayers
             atmosphere.phase[:, :, l, w] .= generate_phase_screen_subharmonics(r0λ[l], atmosphere.dim, sampling_mperpix[l], atmosphere.L0, atmosphere.l0, seed=atmosphere.seeds[l], FTYPE=FTYPE)
