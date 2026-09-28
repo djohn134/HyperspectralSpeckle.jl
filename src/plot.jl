@@ -1,10 +1,8 @@
-using PerceptualColourMaps
-using GLMakie
-GLMakie.activate!()
-
 const PLOT_OPTIONS = (
-    CMAP_OBJECT = cmap("L01"),
-    CMAP_WAVEFRONT = cmap("L20")
+    # CMAP_OBJECT = cmap("L01"),
+    # CMAP_WAVEFRONT = cmap("L20")
+    CMAP_OBJECT = :grays,
+    CMAP_WAVEFRONT = :deep
 )
 
 

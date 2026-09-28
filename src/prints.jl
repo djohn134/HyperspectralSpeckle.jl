@@ -1,6 +1,3 @@
-using Crayons
-
-
 function Base.display(patches::AnisoplanaticPatches{<:AbstractFloat})
     print(Crayon(underline=true, foreground=(255, 215, 0), reset=true), "Anisoplanatic Patches\n"); print(Crayon(reset=true))
     println("\tSize: $(patches.dim)×$(patches.dim) pixels")

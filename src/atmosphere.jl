@@ -1,11 +1,3 @@
-using Random
-using Statistics
-using LazyAlgebra
-using TwoDimensional
-using LinearInterpolators 
-import Interpolations: interpolate, Gridded, Linear
-
-
 mutable struct Atmosphere{T<:AbstractFloat}
     nlayers::Int64
     l0::T
@@ -254,6 +246,7 @@ end
     end
 end
 
+## TODO: Convert to OhMyThreads
 @views function calculate_layer_masks!(patches, atmosphere, observations, object; build_dim=object.dim, verb=true)
     if all(isnan.(atmosphere.wind)) == false
         if verb == true
@@ -261,28 +254,27 @@ end
         end
         FTYPE = gettype(atmosphere)
         ndatasets = length(observations)
+        buffer = zeros(FTYPE, atmosphere.dim, atmosphere.dim)
         scaleby_wavelength = atmosphere.λ_nyquist ./ atmosphere.λ
         scaleby_height = layer_scale_factors(atmosphere.heights, object.range)
-        buffer = zeros(FTYPE, atmosphere.dim, atmosphere.dim, Threads.nthreads())
-        layer_mask = zeros(Bool, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ, Threads.nthreads())
+        layer_mask = zeros(Bool, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
         nyquist_mask, ~ = make_ish_masks(build_dim, 1, atmosphere.λ, λ_nyquist=atmosphere.λ_nyquist, verb=false, FTYPE=FTYPE)
         for dd=1:ndatasets
             deextractors = create_patch_extractors_adjoint(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
-            Threads.@threads :static for t=1:observations[dd].nepochs
-                tid = Threads.threadid()
+            for t=1:observations[dd].nepochs
                 for tsub=1:observations[dd].nsubexp
                     for np=1:patches.npatches
                         for w=1:atmosphere.nλ
                             for l=1:atmosphere.nlayers
-                                mul!(buffer[:, :, tid], deextractors[(t-1)*observations[dd].nsubexp + tsub, np, l, w], nyquist_mask[:, :, 1, w])
-                                layer_mask[:, :, l, w, tid] .= layer_mask[:, :, l, w, tid] .|| round.(Bool, buffer[:, :, tid])
+                                mul!(buffer, deextractors[(t-1)*observations[dd].nsubexp + tsub, np, l, w], nyquist_mask[:, :, 1, w])
+                                layer_mask[:, :, l, w] .|= round.(Bool, buffer)
                             end
                         end
                     end
                 end
             end
         end
-        atmosphere.masks = min.(1.0, dropdims(sum(layer_mask, dims=5), dims=5))
+        atmosphere.masks = min.(1.0, layer_mask)
     end
 end
 

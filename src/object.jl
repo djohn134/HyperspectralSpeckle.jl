@@ -1,9 +1,3 @@
-using FITSIO
-using Statistics
-using NumericalIntegration
-using Interpolations: interpolate, Gridded, Linear
-
-
 mutable struct Object{T<:AbstractFloat}
     dim::Int64
     λ::Vector{T}

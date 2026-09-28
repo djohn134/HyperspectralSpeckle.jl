@@ -1,6 +1,3 @@
-import Interpolations: LinearInterpolation, Line
-
-
 const OPTICS_DIR = "$(@__DIR__)/../data/optics"
 const ELEMENT_FILENAMES = Dict(
     ## Filter

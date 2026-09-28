@@ -1,9 +1,3 @@
-using FFTW
-using Statistics
-using LinearAlgebra
-using OptimPackNextGen
-
-
 const VERB_LEVELS = Dict(
     :full=>Dict("vm"=>true, "vo"=>true),  # Print output from the MFBD iteration, and the output from OptimPackNextGen
     :reduced=>Dict("vm"=>true, "vo"=>false),  # Print only the output from the MFBD itration

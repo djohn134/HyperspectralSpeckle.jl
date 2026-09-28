@@ -1,14 +1,3 @@
-using JLD2
-using FFTW
-using FITSIO
-using Statistics
-using DelimitedFiles
-using ZernikePolynomials
-import Interpolations: LinearInterpolation, Line
-FFTW.set_provider!("fftw")
-FFTW.set_num_threads(1)
-
-
 mutable struct ConvolutionPlan{T<:Number}
     scale::T
     ft1::Union{FFTW.rFFTWPlan{T, -1, false, 2, Tuple{Int64, Int64}}, FFTW.cFFTWPlan{Complex{T}, -1, false, 2, UnitRange{Int64}}}
@@ -596,14 +585,6 @@ end
     end
 
     return mosaic
-end
-
-function create_zernike_screen(dim, radius, index, waves; FTYPE=Float64)
-    x = collect(-dim÷2:dim÷2-1) ./ radius
-    ϕz = evaluatezernike(x, x, [Noll(index)], [waves])
-    N = normalization(Noll(index))
-    ϕz .*= pi / N
-    return FTYPE.(ϕz)
 end
 
 function smooth_to_resolution(λ, F, resolution)

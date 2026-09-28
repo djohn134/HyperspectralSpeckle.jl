@@ -1,7 +1,3 @@
-using FITSIO
-using Crayons
-
-
 mutable struct Masks{T<:AbstractFloat}
     label::String
     masks::Array{T, 4}

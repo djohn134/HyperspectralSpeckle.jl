@@ -1,6 +1,3 @@
-using ZernikePolynomials
-
-
 mutable struct Diversity{T<:AbstractFloat}
     ixNoll::Int64
     waves::T
