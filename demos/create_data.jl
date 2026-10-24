@@ -36,7 +36,7 @@ qefile = "../data/qe/prime-95b_qe.dat"
 rn = 2.0  # e⁻
 saturation = 30000.0  # e⁻
 gain = saturation / (typemax(DTYPE))  # e⁻ / ADU
-DTYPE = FTYPE
+# DTYPE = FTYPE
 exptime = 5e-3  # sec
 nepochs = 11
 times = collect(0:nepochs-1) .* exptime
@@ -175,12 +175,13 @@ seeds = [713, 1212, 525118]
 Dmeta = D .+ (fov/206265) .* heights
 sampling_nyquist_mperpix = layer_nyquist_sampling_mperpix(D, image_dim, nlayers)
 sampling_nyquist_arcsecperpix = layer_nyquist_sampling_arcsecperpix(D, fov, heights, image_dim)
+
 ~, transmission = readtransmission("../data/atmospheric_transmission.dat", resolution=resolution, λ=λ)
 ############ Create Atmosphere ############
 atmosphere = Atmosphere(
     λ,
     observations, 
-    object, 
+    object,
     patches,
     Dr0=Dr0_ref_vertical,
     wind=wind, 

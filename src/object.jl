@@ -46,9 +46,9 @@ end
 function mag2flux(mag, filter; ζ=0.0)
     ## Flux at top of atmosphere
     airmass = secd(ζ)
-    irradiance_vega = magnitude_zeropoint(filter.λ, filter.response)  # ph/s/m^2
-    # radiant_energy_target = exptime * area * irradiance_vega * 10^(-(mag + 0.3*airmass) / 2.5)  # ph
-    irradiance_target = irradiance_vega * 10^(-(mag + 0.3*airmass) / 2.5)  # ph/s/m^2
+    irradiance_solar = magnitude_zeropoint(filter.λ, filter.response)  # ph/s/m^2
+    # radiant_energy_target = exptime * area * irradiance_solar * 10^(-(mag + 0.3*airmass) / 2.5)  # ph
+    irradiance_target = irradiance_solar * 10^(-(mag + 0.3*airmass) / 2.5)  # ph/s/m^2
     # return radiant_energy_target
     return irradiance_target
 end
@@ -61,7 +61,7 @@ function magnitude_zeropoint(λfilter, filter_response)
 
     ~, spectral_irradiance = vega_spectrum(λ=λfilter)  # W/m^2/m
     spectral_irradiance ./= h*c ./ λfilter  # ph/s/m^2/m
-    irradiance = NumericalIntegration.integrate(λfilter, spectral_irradiance .* filter_response)  # ph/s/m^2
+    irradiance = (length(λfilter) == 1) ? spectral_irradiance[1] * 10^(round(log10(λfilter[1]))-1) : NumericalIntegration.integrate(λfilter, spectral_irradiance .* filter_response)  # ph/s/m^2
     return irradiance
 end
 

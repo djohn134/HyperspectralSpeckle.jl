@@ -1,11 +1,12 @@
-const OPTICS_DIR = "$(@__DIR__)/../data/optics"
+const OPTICS_DIR = normpath("$(@__DIR__)/../data/optics")
+const FILTERS_DIR = normpath("$(@__DIR__)/../data/filters")
 const ELEMENT_FILENAMES = Dict(
     ## Filter
-    "Bessell:U"=>"$(OPTICS_DIR)/Generic_Bessell.U.dat",
-    "Bessell:B"=>"$(OPTICS_DIR)/Generic_Bessell.B.dat",
-    "Bessell:V"=>"$(OPTICS_DIR)/Generic_Bessell.V.dat",
-    "Bessell:R"=>"$(OPTICS_DIR)/Generic_Bessell.R.dat",
-    "Bessell:I"=>"$(OPTICS_DIR)/Generic_Bessell.I.dat",
+    "Bessell:U"=>"$(FILTERS_DIR)/Generic_Bessell.U.dat",
+    "Bessell:B"=>"$(FILTERS_DIR)/Generic_Bessell.B.dat",
+    "Bessell:V"=>"$(FILTERS_DIR)/Generic_Bessell.V.dat",
+    "Bessell:R"=>"$(FILTERS_DIR)/Generic_Bessell.R.dat",
+    "Bessell:I"=>"$(FILTERS_DIR)/Generic_Bessell.I.dat",
     ## Lens Coatings
     "Thorlabs:A"=>"$(OPTICS_DIR)/thorlabs-A.dat",
     "Thorlabs:B"=>"$(OPTICS_DIR)/thorlabs-B.dat",
@@ -111,8 +112,12 @@ struct OpticalSystem{T<:AbstractFloat}
         yflip = false
         response = ones(FTYPE, length(λ))
         for element in elements
-            itp = LinearInterpolation(element.λ, element.response, extrapolation_bc=Line())
-            response .*= max.(0.0, itp(λ))
+            if length(λ) == 1
+                response .*= element.response
+            else
+                itp = LinearInterpolation(element.λ, element.response, extrapolation_bc=Line())
+                response .*= max.(0.0, itp(λ))
+            end
             xflip = xflip ⊻ element.xflip
             yflip = yflip ⊻ element.yflip
         end
