@@ -259,6 +259,7 @@ end
         scaleby_height = layer_scale_factors(atmosphere.heights, object.range)
         layer_mask = zeros(Bool, atmosphere.dim, atmosphere.dim, atmosphere.nlayers, atmosphere.nλ)
         nyquist_mask, ~ = make_ish_masks(build_dim, 1, atmosphere.λ, λ_nyquist=atmosphere.λ_nyquist, verb=false, FTYPE=FTYPE)
+
         for dd=1:ndatasets
             deextractors = create_patch_extractors_adjoint(patches, atmosphere, observations[dd], object, scaleby_wavelength, scaleby_height, build_dim=build_dim)
             for t=1:observations[dd].nepochs

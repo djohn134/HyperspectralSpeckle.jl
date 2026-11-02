@@ -569,7 +569,8 @@ end
     ## 3d stack of images to 2d mosaic image
     FTYPE = eltype(stack)
     dim = size(stack, 1)
-    mosaic = zeros(FTYPE, dim*nside, dim*nside)
+    mosaic = Matrix{Union{Missing, FTYPE}}(undef, dim*nside, dim*nside)
+    fill!(mosaic, missing)
     n1 = 1
     n2 = 1
     for y=1:nside
